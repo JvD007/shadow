@@ -7,8 +7,27 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import type { RunCheckResponse } from "@shared/schema";
 
-const __filenameLocal = fileURLToPath(import.meta.url);
-const __dirnameLocal = path.dirname(__filenameLocal);
+// Resolve our own directory in a way that works in BOTH:
+//   - dev (tsx, ESM): import.meta.url is a file:// URL
+//   - prod (esbuild CJS bundle): import.meta.url is undefined
+// Falling back to process.cwd() lets the dist/python lookup below succeed.
+function resolveSelfDir(): string {
+  try {
+    const metaUrl: string | undefined = (import.meta as any)?.url;
+    if (typeof metaUrl === "string" && metaUrl.length > 0) {
+      return path.dirname(fileURLToPath(metaUrl));
+    }
+  } catch {
+    // fall through
+  }
+  // CJS bundle: __dirname is defined and points at dist/.
+  if (typeof __dirname === "string" && __dirname.length > 0) {
+    return __dirname;
+  }
+  return process.cwd();
+}
+
+const __dirnameLocal = resolveSelfDir();
 
 // Public, non-secret defaults. Real values come from env. Token & keys are
 // always required from env — never hard-coded.
