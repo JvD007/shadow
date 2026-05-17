@@ -290,12 +290,16 @@ export default function Inspector() {
     queryKey: ["/api/garage-prefixes", jobVendor, jobVram],
     enabled: hasRun && prefixDiscoveryReady,
     queryFn: async () => {
+      const t0 = performance.now();
       const res = await apiRequest("POST", "/api/garage-prefixes", {
         vendor: jobVendor,
         vram: jobVram,
         prefix: selectedPrefix,
       });
-      return (await res.json()) as GaragePrefixListResponse;
+      const data = (await res.json()) as GaragePrefixListResponse;
+      const http_ms = Math.round(performance.now() - t0);
+      setFlowTimings((prev) => ({ ...(prev ?? {}), ...(data.timings ?? {}), http_ms }));
+      return data;
     },
   });
 
@@ -463,9 +467,7 @@ export default function Inspector() {
       const res = await apiRequest("POST", "/api/garage-objects", { prefix: selectedPrefix });
       const data: FolderContentsResponse = await res.json();
       const http_ms = Math.round(performance.now() - t0);
-      if (data.ok) {
-        setFlowTimings({ ...(data.timings ?? {}), http_ms });
-      }
+      setFlowTimings((prev) => ({ ...(prev ?? {}), ...(data.timings ?? {}), http_ms }));
       return data;
     },
     staleTime: 60 * 1000,
@@ -1251,16 +1253,28 @@ function FlowNode({
   );
 }
 
+function fmtMs(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
 function FlowArrow({ label, dir = "right", timing }: { label?: string; dir?: "right" | "left"; timing?: number }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-0.5 shrink-0">
-      {label && <span className="text-[9px] font-medium text-muted-foreground whitespace-nowrap">{label}</span>}
+    <div className="flex flex-col items-center justify-center gap-1 shrink-0">
+      {label && (
+        <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap leading-none">
+          {label}
+        </span>
+      )}
       {dir === "right"
-        ? <ArrowRight className="size-4 text-muted-foreground" />
-        : <ArrowLeft  className="size-4 text-muted-foreground" />}
-      {timing != null && (
-        <span className="text-[9px] font-mono text-primary/80 whitespace-nowrap tabular-nums">
-          {timing < 1000 ? `${timing}ms` : `${(timing / 1000).toFixed(1)}s`}
+        ? <ArrowRight className="size-5 text-muted-foreground" />
+        : <ArrowLeft  className="size-5 text-muted-foreground" />}
+      {timing != null ? (
+        <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-mono font-bold text-primary whitespace-nowrap tabular-nums leading-none">
+          {fmtMs(timing)}
+        </span>
+      ) : (
+        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-mono text-muted-foreground/50 whitespace-nowrap leading-none">
+          — ms
         </span>
       )}
     </div>
@@ -1544,24 +1558,33 @@ function ActiveFlowPanel({
           </div>
 
           {/* Timing summary */}
-          {flowTimings && (
-            <div className="flex flex-wrap gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-[10px]">
+          <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Layer timings
+            </p>
+            <div className="flex flex-wrap gap-3">
               {[
-                { label: "HTTP round-trip", value: flowTimings.http_ms },
-                { label: "SDK auth", value: flowTimings.auth_ms },
-                { label: "Worker job", value: flowTimings.job_ms },
-                { label: "S3 operation", value: flowTimings.s3_ms },
-                { label: "Server total", value: flowTimings.total_ms },
-              ].filter(t => t.value != null).map(({ label, value }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className="font-mono font-semibold text-foreground tabular-nums">
-                    {value! < 1000 ? `${value}ms` : `${(value! / 1000).toFixed(1)}s`}
-                  </span>
+                { label: "HTTP round-trip", value: flowTimings?.http_ms, color: "text-sky-600 dark:text-sky-400 border-sky-500/40 bg-sky-500/10" },
+                { label: "SDK auth", value: flowTimings?.auth_ms, color: "text-violet-600 dark:text-violet-400 border-violet-500/40 bg-violet-500/10" },
+                { label: "Worker job", value: flowTimings?.job_ms, color: "text-emerald-600 dark:text-emerald-400 border-emerald-500/40 bg-emerald-500/10" },
+                { label: "S3 operation", value: flowTimings?.s3_ms, color: "text-amber-600 dark:text-amber-400 border-amber-500/40 bg-amber-500/10" },
+                { label: "Server total", value: flowTimings?.total_ms, color: "text-blue-600 dark:text-blue-400 border-blue-500/40 bg-blue-500/10" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="flex flex-col items-center gap-1">
+                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">{label}</span>
+                  {value != null ? (
+                    <span className={`rounded-full border px-3 py-1 text-xs font-mono font-bold tabular-nums ${color}`}>
+                      {fmtMs(value)}
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs font-mono text-muted-foreground/50 tabular-nums">
+                      — ms
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
-          )}
+          </div>
         </CardContent>
       )}
     </Card>
