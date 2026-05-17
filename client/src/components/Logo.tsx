@@ -8,7 +8,7 @@ export function Logo({ className = "h-8 w-8" }: { className?: string }) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
-      aria-label="GridWeave Inspector logo"
+      aria-label="Dell Technologies S3 Client logo"
       role="img"
     >
       {/* Woven grid: two interlocking squares rotated, suggesting a fabric/grid */}

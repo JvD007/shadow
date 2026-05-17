@@ -513,10 +513,10 @@ export default function Inspector() {
             <span className="text-primary"><Logo className="h-7 w-7" /></span>
             <div>
               <div className="text-sm font-semibold leading-none" data-testid="text-brand">
-                GridWeave Inspector
+                Dell Technologies - Distributed Architecture | S3 Client
               </div>
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                GPU · Garage S3 · Ray Data
+                Distributed Architecture · Garage S3
               </div>
             </div>
           </div>
@@ -1207,7 +1207,7 @@ export default function Inspector() {
 
         <footer className="space-y-4 pt-4">
           <p className="text-[11px] text-muted-foreground">
-            Wraps a notebook-style GridWeave + Garage S3 + GPU readiness check. Configuration is read
+            Dell Technologies Distributed Architecture S3 Client. Configuration is read
             from environment variables — no secrets are stored in the browser.
           </p>
           <VersionsPanel />
@@ -1417,7 +1417,7 @@ function ActiveFlowPanel({
           <div className="space-y-1">
             <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Request ↓</p>
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-3">
-              <FlowNode label="Browser" sublabel="GridWeave Inspector"
+              <FlowNode label="Browser" sublabel="Dell S3 Client"
                 color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
                 icon={<Monitor className="size-5" />} />
               <FlowArrow label="HTTP" />
@@ -1443,7 +1443,7 @@ function ActiveFlowPanel({
           <div className="space-y-1">
             <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Response ↑</p>
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-3">
-              <FlowNode label={meta.title} sublabel="GridWeave Inspector"
+              <FlowNode label={meta.title} sublabel="Dell S3 Client"
                 color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
                 icon={<Monitor className="size-5" />} />
               <FlowArrow label="HTTP response" dir="left" />
