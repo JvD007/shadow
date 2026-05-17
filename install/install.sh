@@ -106,6 +106,8 @@ rsync -a --delete \
   --exclude='.env' \
   --exclude='*.env' \
   --exclude='install' \
+  --exclude='venv' \
+  --exclude='.venv' \
   "${PROJECT_ROOT}/" \
   "${INSTALL_DIR}/"
 
