@@ -81,7 +81,7 @@ def main() -> None:
         image_keys: list[str] = []
 
         paginator = s3.get_paginator("list_objects_v2")
-        page_kwargs: dict = {"Bucket": bucket}
+        page_kwargs: dict = {"Bucket": bucket, "Delimiter": "/"}
         if prefix:
             page_kwargs["Prefix"] = prefix
 
