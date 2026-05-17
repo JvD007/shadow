@@ -50,6 +50,7 @@ const PREFIX_SCRIPT = resolvePy("garage_prefixes.py");
 const PREFIX_DIRECT_SCRIPT = resolvePy("garage_prefixes_direct.py");
 const WRITE_SCRIPT = resolvePy("garage_write.py");
 const IMAGE_SCRIPT = resolvePy("garage_image.py");
+const OBJECTS_SCRIPT = resolvePy("garage_objects_direct.py");
 
 const VENDORS: AcceleratorVendor[] = ["NVIDIA", "AMD", "Axelera", "Lumai"];
 
@@ -320,6 +321,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/garage-prefixes", requireAuth, (req, res) => handleGaragePrefixes(req, res));
   app.get("/api/garage-prefixes", requireAuth, (req, res) => handleGaragePrefixes(req, res));
+
+  app.post("/api/garage-objects", requireAuth, async (req, res) => {
+    const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : (process.env.GARAGE_PREFIX || "");
+    const job: JobConfig = { vendor: "NVIDIA", vram: "2GB", prefix };
+    try {
+      const r = await runPython(OBJECTS_SCRIPT, job, PYTHON_TIMEOUT_MS);
+      return res.status(200).json(parsePythonJson(r.stdout));
+    } catch (e: any) {
+      return res.status(200).json({
+        ok: false, objects: [], image_previews: [],
+        error: { code: "objects_failed", message: e?.message || String(e) },
+      });
+    }
+  });
 
   app.post("/api/garage-images", requireAuth, async (req, res) => {
     const keys = Array.isArray(req.body?.keys)

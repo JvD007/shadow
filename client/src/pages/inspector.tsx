@@ -54,11 +54,13 @@ import {
 } from "lucide-react";
 import type {
   AcceleratorVendor,
+  FolderContentsResponse,
   GarageImageError,
   GarageImageResponse,
   GaragePrefixListResponse,
   GarageWriteResponse,
   ImagePreview,
+  ObjectSampleRow,
   RunCheckResponse,
 } from "@shared/schema";
 
@@ -662,6 +664,24 @@ export default function Inspector() {
           </Card>
         )}
 
+        {/* Folder browser + contents */}
+        <FolderBrowser
+          selectedPrefix={selectedPrefix}
+          onSelect={(prefix) => {
+            setPrefixTouched(true);
+            setSelectedPrefix(prefix);
+          }}
+          enabled={prefixDiscoveryReady}
+        />
+        <FolderContents
+          prefix={selectedPrefix}
+          enabled={prefixDiscoveryReady}
+          onSelectImage={(img, thumb) => {
+            setSelectedImage(img);
+            setSelectedThumb(thumb ?? null);
+          }}
+        />
+
         <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <Card data-testid="card-worker-upload" className="border-card-border">
             <CardHeader className="pb-3">
@@ -808,16 +828,6 @@ export default function Inspector() {
             </CardContent>
           </Card>
         </section>
-
-        {/* Folder browser */}
-        <FolderBrowser
-          selectedPrefix={selectedPrefix}
-          onSelect={(prefix) => {
-            setPrefixTouched(true);
-            setSelectedPrefix(prefix);
-          }}
-          enabled={prefixDiscoveryReady}
-        />
 
         {/* Summary cards */}
         <section
@@ -1114,6 +1124,167 @@ export default function Inspector() {
         </footer>
       </main>
     </div>
+  );
+}
+
+const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
+
+function FolderContents({
+  prefix,
+  enabled,
+  onSelectImage,
+}: {
+  prefix: string;
+  enabled: boolean;
+  onSelectImage: (img: ImagePreview, thumb: { base64: string; mime: string } | undefined) => void;
+}) {
+  const [selectedObj, setSelectedObj] = useState<ObjectSampleRow | null>(null);
+
+  const contentsQuery = useQuery<FolderContentsResponse>({
+    queryKey: ["/api/garage-objects", prefix],
+    enabled,
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-objects", { prefix });
+      return res.json();
+    },
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+
+  const objects = contentsQuery.data?.objects ?? [];
+  const imagePreviews = contentsQuery.data?.image_previews ?? [];
+  const thumbMap = Object.fromEntries(
+    imagePreviews.filter((p) => p.base64).map((p) => [p.key, { base64: p.base64!, mime: p.mime }])
+  );
+
+  if (!enabled) return null;
+
+  return (
+    <Card className="border-card-border" data-testid="card-folder-contents">
+      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <Database className="size-4 text-primary" />
+          Folder contents
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {prefix || "(root)"}
+          </span>
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          {contentsQuery.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+          <Badge variant="secondary" className="tabular-nums">{objects.length} objects</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4 p-0 pb-4">
+        {/* Image strip */}
+        {imagePreviews.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto px-5 pb-1">
+            {imagePreviews.map((img, i) => (
+              <button
+                key={img.key}
+                onClick={() => onSelectImage(img, thumbMap[img.key])}
+                className="group shrink-0 overflow-hidden rounded-md border border-border bg-muted transition hover:border-primary/60"
+                title={img.key}
+                data-testid={`button-fc-image-${i}`}
+              >
+                {img.base64 ? (
+                  <img
+                    src={`data:${img.mime};base64,${img.base64}`}
+                    alt={img.key}
+                    className="h-20 w-20 object-cover transition group-hover:scale-[1.04]"
+                  />
+                ) : (
+                  <div className="flex h-20 w-20 items-center justify-center">
+                    <ImageIcon className="size-6 text-muted-foreground/40" />
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Object table */}
+        {contentsQuery.isLoading ? (
+          <div className="flex items-center gap-2 px-5 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            Loading objects…
+          </div>
+        ) : objects.length > 0 ? (
+          <div className="max-h-72 overflow-auto">
+            <Table>
+              <TableHeader className="sticky top-0 bg-card">
+                <TableRow>
+                  <TableHead className="font-mono text-[11px] uppercase tracking-wide">key</TableHead>
+                  <TableHead className="text-right font-mono text-[11px] uppercase tracking-wide">size</TableHead>
+                  <TableHead className="font-mono text-[11px] uppercase tracking-wide">last_modified</TableHead>
+                  <TableHead className="font-mono text-[11px] uppercase tracking-wide">storage_class</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {objects.map((row, i) => {
+                  const isImg = IMAGE_RE.test(row.key);
+                  return (
+                    <TableRow
+                      key={`${row.key}-${i}`}
+                      className="cursor-pointer transition hover:bg-muted/50"
+                      onClick={() => {
+                        if (isImg) {
+                          const img: ImagePreview = { key: row.key, mime: thumbMap[row.key]?.mime || "image/jpeg", base64: thumbMap[row.key]?.base64 };
+                          onSelectImage(img, thumbMap[row.key]);
+                        } else {
+                          setSelectedObj(row);
+                        }
+                      }}
+                      data-testid={`row-fc-object-${i}`}
+                    >
+                      <TableCell className="max-w-[28rem] truncate font-mono text-xs" title={row.key}>
+                        <span className="flex items-center gap-1.5">
+                          {isImg && <ImageIcon className="size-3 shrink-0 text-primary/60" />}
+                          {row.key}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{formatBytes(Number(row.size))}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{row.last_modified ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{row.storage_class}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <p className="px-5 text-xs text-muted-foreground" data-testid="text-fc-empty">
+            {contentsQuery.data?.ok === false
+              ? (contentsQuery.data.error?.message || "Could not load objects.")
+              : "No objects in this folder."}
+          </p>
+        )}
+      </CardContent>
+
+      {/* Object detail dialog */}
+      <Dialog open={Boolean(selectedObj)} onOpenChange={(open) => { if (!open) setSelectedObj(null); }}>
+        <DialogContent data-testid="dialog-object-detail">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Object details</DialogTitle>
+            <DialogDescription className="break-all font-mono text-xs">{selectedObj?.key}</DialogDescription>
+          </DialogHeader>
+          {selectedObj && (
+            <div className="space-y-2 text-xs">
+              {[
+                ["Key", selectedObj.key],
+                ["Size", formatBytes(Number(selectedObj.size))],
+                ["Last modified", selectedObj.last_modified ?? "—"],
+                ["Storage class", selectedObj.storage_class],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-4 border-b border-border pb-1.5 last:border-0">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="break-all font-mono text-right">{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }
 

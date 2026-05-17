@@ -48,6 +48,15 @@ export interface GaragePrefixListResponse {
   error?: { code: string; message: string };
 }
 
+export interface FolderContentsResponse {
+  ok: boolean;
+  bucket?: string;
+  prefix?: string;
+  objects: ObjectSampleRow[];
+  image_previews: ImagePreview[];
+  error?: { code: string; message: string };
+}
+
 export interface GarageWriteObjectResult {
   key: string;
   size: number;
