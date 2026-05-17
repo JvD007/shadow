@@ -1257,24 +1257,40 @@ function fmtMs(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`;
 }
 
-function FlowArrow({ label, dir = "right", timing }: { label?: string; dir?: "right" | "left"; timing?: number }) {
+/** Simple arrow for the static WorkflowDiagram — no timing. */
+function FlowArrow({ label, dir = "right" }: { label?: string; dir?: "right" | "left" }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-1 shrink-0">
-      {label && (
-        <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap leading-none">
-          {label}
-        </span>
-      )}
+    <div className="flex flex-col items-center justify-center gap-0.5 shrink-0">
+      {label && <span className="text-[9px] font-medium text-muted-foreground whitespace-nowrap">{label}</span>}
       {dir === "right"
-        ? <ArrowRight className="size-5 text-muted-foreground" />
-        : <ArrowLeft  className="size-5 text-muted-foreground" />}
+        ? <ArrowRight className="size-4 text-muted-foreground" />
+        : <ArrowLeft  className="size-4 text-muted-foreground" />}
+    </div>
+  );
+}
+
+/** Timed arrow for the ActiveFlowPanel — timing badge on top, arrow in middle, label below. */
+function ActiveFlowArrow({ label, dir = "right", timing }: { label?: string; dir?: "right" | "left"; timing?: number }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5 shrink-0 min-w-[80px]">
+      {/* ── Timing badge — top, most prominent ── */}
       {timing != null ? (
-        <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-mono font-bold text-primary whitespace-nowrap tabular-nums leading-none">
+        <span className="rounded-lg border-2 border-primary/70 bg-primary/15 px-3 py-1 text-xs font-mono font-bold text-primary whitespace-nowrap tabular-nums shadow-sm">
           {fmtMs(timing)}
         </span>
       ) : (
-        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-mono text-muted-foreground/50 whitespace-nowrap leading-none">
+        <span className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/20 px-3 py-1 text-xs font-mono text-muted-foreground/60 whitespace-nowrap">
           — ms
+        </span>
+      )}
+      {/* ── Arrow icon — vertically centered in the row ── */}
+      {dir === "right"
+        ? <ArrowRight className="size-5 text-muted-foreground" />
+        : <ArrowLeft  className="size-5 text-muted-foreground" />}
+      {/* ── Connection label — below arrow ── */}
+      {label && (
+        <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
+          {label}
         </span>
       )}
     </div>
@@ -1453,39 +1469,39 @@ function ActiveFlowPanel({
       {open && (
         <CardContent className="space-y-3 pt-1">
           {/* ── Request row (left → right) ────────────────────── */}
-          <div className="space-y-1">
+          <div className="space-y-2">
             <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">
               Request ↓
             </p>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 overflow-x-auto pb-1">
               <FlowNode
                 label="Browser"
                 sublabel="GridWeave Inspector"
                 color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
                 icon={<Monitor className="size-5" />}
               />
-              <FlowArrow label="HTTP" timing={flowTimings?.http_ms} />
+              <ActiveFlowArrow label="HTTP" timing={flowTimings?.http_ms} />
               <FlowNode
                 label="App Server"
                 sublabel="Express / Node"
                 color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
                 icon={<Server className="size-5" />}
               />
-              <FlowArrow label="GridWeave SDK" timing={flowTimings?.auth_ms} />
+              <ActiveFlowArrow label="GridWeave SDK" timing={flowTimings?.auth_ms} />
               <FlowNode
                 label="GridWeave"
                 sublabel={`${vendor} · ${vram}`}
                 color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
                 icon={<Sparkles className="size-5" />}
               />
-              <FlowArrow label="dispatch" timing={dispatch_ms} />
+              <ActiveFlowArrow label="dispatch" timing={dispatch_ms} />
               <FlowNode
                 label="Remote Worker"
                 sublabel={meta.workerDesc}
                 color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
                 icon={isRunning ? <Loader2 className="size-5 animate-spin" /> : <Cpu className="size-5" />}
               />
-              <FlowArrow label={meta.s3Label} timing={flowTimings?.s3_ms} />
+              <ActiveFlowArrow label={meta.s3Label} timing={flowTimings?.s3_ms} />
               <FlowNode
                 label={folderName}
                 sublabel={bucket ? `s3://${bucket}/` : "S3"}
@@ -1496,39 +1512,39 @@ function ActiveFlowPanel({
           </div>
 
           {/* ── Response row (right → left) ───────────────────── */}
-          <div className="space-y-1">
+          <div className="space-y-2">
             <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">
               Response ↑
             </p>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 overflow-x-auto pb-1">
               <FlowNode
                 label={meta.title}
                 sublabel="GridWeave Inspector"
                 color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
                 icon={<Monitor className="size-5" />}
               />
-              <FlowArrow label="HTTP response" dir="left" timing={flowTimings?.http_ms} />
+              <ActiveFlowArrow label="HTTP response" dir="left" timing={flowTimings?.http_ms} />
               <FlowNode
                 label="App Server"
                 sublabel="JSON → browser"
                 color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
                 icon={<Server className="size-5" />}
               />
-              <FlowArrow label="JSON result" dir="left" timing={flowTimings?.total_ms} />
+              <ActiveFlowArrow label="server total" dir="left" timing={flowTimings?.total_ms} />
               <FlowNode
                 label="GridWeave"
                 sublabel="job result"
                 color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
                 icon={<Sparkles className="size-5" />}
               />
-              <FlowArrow label="result" dir="left" timing={flowTimings?.job_ms} />
+              <ActiveFlowArrow label="worker job" dir="left" timing={flowTimings?.job_ms} />
               <FlowNode
                 label="Remote Worker"
                 sublabel="serialise result"
                 color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
                 icon={<Cpu className="size-5" />}
               />
-              <FlowArrow label={meta.returnLabel} dir="left" timing={flowTimings?.s3_ms} />
+              <ActiveFlowArrow label={meta.returnLabel} dir="left" timing={flowTimings?.s3_ms} />
               <FlowNode
                 label={folderName}
                 sublabel={bucket ? `s3://${bucket}/` : "S3"}
