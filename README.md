@@ -66,6 +66,110 @@ bash start.sh --build  # force rebuild then start production
 
 ---
 
+## Linux service (Ubuntu 24.04)
+
+Run GridWeave Inspector as a `systemd` service that starts automatically on boot.
+
+### Prerequisites
+
+- Ubuntu 24.04 (tested) — other Debian-based distros may work
+- `sudo` / root access
+- The GridWeave SDK `.whl` file in the project root (optional but recommended)
+
+### Install
+
+Run the installer from the project root:
+
+```bash
+sudo bash install/install.sh
+```
+
+The script is safe to re-run — it upgrades in-place. It will:
+
+1. Install Node.js 20 LTS and Python 3 via `apt`
+2. Create a dedicated `gridweave` system user
+3. Copy the application to `/opt/gridweave-inspector/`
+4. Build the production bundle (`npm run build`)
+5. Create a Python venv at `/opt/gridweave-inspector/venv/` with `boto3`, `s3fs`, `pandas`, `Pillow`, and the GridWeave SDK
+6. Write a config file at `/etc/gridweave-inspector/app.env`
+7. Install and start `gridweave-inspector.service` via systemd
+
+### Configure
+
+Edit the config file with your real credentials:
+
+```bash
+sudo nano /etc/gridweave-inspector/app.env
+```
+
+```ini
+GRIDWEAVE_TOKEN=your_jwt_here
+GRIDWEAVE_PLATFORM_URL=https://platform.gridweave.ai
+
+GARAGE_ENDPOINT_URL=https://garage.example.com
+GARAGE_BUCKET=your-bucket
+GARAGE_PREFIX=your/prefix/
+GARAGE_ACCESS_KEY=your_access_key
+GARAGE_SECRET_KEY=your_secret_key
+GARAGE_REGION=garage
+```
+
+Then restart the service to apply:
+
+```bash
+sudo systemctl restart gridweave-inspector
+```
+
+### Installed paths
+
+| Path | Purpose |
+|------|---------|
+| `/opt/gridweave-inspector/` | Application files |
+| `/opt/gridweave-inspector/venv/` | Python virtual environment |
+| `/opt/gridweave-inspector/dist/` | Production bundle |
+| `/etc/gridweave-inspector/app.env` | Runtime config / secrets |
+| `/etc/systemd/system/gridweave-inspector.service` | systemd unit file |
+
+### Service management
+
+```bash
+# Check status
+sudo systemctl status gridweave-inspector
+
+# Live logs
+sudo journalctl -u gridweave-inspector -f
+
+# Start / stop / restart
+sudo systemctl start gridweave-inspector
+sudo systemctl stop gridweave-inspector
+sudo systemctl restart gridweave-inspector
+
+# Enable / disable auto-start on boot
+sudo systemctl enable gridweave-inspector
+sudo systemctl disable gridweave-inspector
+```
+
+The app listens on port **5000** by default. Change `PORT=` in `/etc/gridweave-inspector/app.env` to use a different port.
+
+### Upgrade
+
+Pull the latest source and re-run the installer:
+
+```bash
+git pull
+sudo bash install/install.sh
+```
+
+### Uninstall
+
+```bash
+sudo bash install/uninstall.sh
+```
+
+Prompts before deleting credentials. Removes the service, app files, system user, and optionally the config directory.
+
+---
+
 ## Run locally (manual)
 
 ```bash
