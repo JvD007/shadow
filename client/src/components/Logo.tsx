@@ -1,20 +1,28 @@
 export function Logo({ className = "h-8 w-8" }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 32 32"
+      viewBox="0 0 40 40"
       className={className}
       fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-label="Dell Technologies S3 Client logo"
+      aria-label="Dell Technologies logo"
       role="img"
     >
-      {/* Woven grid: two interlocking squares rotated, suggesting a fabric/grid */}
-      <rect x="4" y="4" width="24" height="24" rx="4" />
-      <path d="M4 11h24M4 21h24M11 4v24M21 4v24" />
-      <circle cx="16" cy="16" r="2.25" fill="currentColor" stroke="none" />
+      {/* Blue circle */}
+      <circle cx="20" cy="20" r="19" fill="#007DB8" />
+      {/* "dell" in white italic bold — Dell brand style */}
+      <text
+        x="20"
+        y="26"
+        textAnchor="middle"
+        fill="white"
+        fontSize="13"
+        fontFamily="Arial, Helvetica, sans-serif"
+        fontWeight="bold"
+        fontStyle="italic"
+        letterSpacing="-0.5"
+      >
+        dell
+      </text>
     </svg>
   );
 }

@@ -513,10 +513,10 @@ export default function Inspector() {
             <span className="text-primary"><Logo className="h-7 w-7" /></span>
             <div>
               <div className="text-sm font-semibold leading-none" data-testid="text-brand">
-                Dell Technologies - Distributed Architecture | S3 Client
+                Dell Technologies
               </div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Distributed Architecture · Garage S3
+              <div className="text-[11px] tracking-wider text-muted-foreground">
+                distributed architecture · garage s3
               </div>
             </div>
           </div>
