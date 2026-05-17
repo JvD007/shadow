@@ -436,6 +436,20 @@ export default function Inspector() {
     }
     return map;
   }, [batchThumbQuery.data]);
+  const folderContentsQuery = useQuery<FolderContentsResponse>({
+    queryKey: ["/api/garage-objects", selectedPrefix],
+    enabled: prefixDiscoveryReady,
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-objects", { prefix: selectedPrefix });
+      return res.json();
+    },
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+
+  const folderImages = folderContentsQuery.data?.image_previews ?? [];
+  const folderObjects = folderContentsQuery.data?.objects ?? [];
+
   const selectedFilesSize = useMemo(
     () => selectedFiles.reduce((sum, file) => sum + file.size, 0),
     [selectedFiles]
@@ -972,22 +986,28 @@ export default function Inspector() {
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <ImageIcon className="size-4 text-primary" />
                 Image previews
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {selectedPrefix || "(root)"}
+                </span>
               </CardTitle>
-              <Badge variant="secondary" className="tabular-nums" data-testid="badge-image-count">
-                {result?.image_previews.length ?? 0}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {folderContentsQuery.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+                <Badge variant="secondary" className="tabular-nums" data-testid="badge-image-count">
+                  {folderImages.length}
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent>
-              {result && result.image_previews.length > 0 ? (
+              {folderImages.length > 0 ? (
                 <ScrollArea className="h-[34rem] pr-3" data-testid="scroll-image-gallery">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {result.image_previews.map((img, i) => (
+                    {folderImages.map((img, i) => (
                       <ImageCard
                         key={img.key}
                         img={img}
                         index={i}
-                        thumbData={img.base64 ? { base64: img.base64, mime: img.mime } : thumbMap[img.key]}
-                        batchLoading={batchThumbQuery.isPending && imageKeys.length > 0}
+                        thumbData={img.base64 ? { base64: img.base64, mime: img.mime } : undefined}
+                        batchLoading={false}
                         onSelect={(thumb) => {
                           setSelectedImage(img);
                           setSelectedThumb(thumb ?? null);
@@ -999,9 +1019,11 @@ export default function Inspector() {
               ) : (
                 <div className="flex h-[22rem] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border text-center">
                   <ImageIcon className="size-8 text-muted-foreground/50" />
-                  <p className="text-sm text-muted-foreground">No image previews yet.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {folderContentsQuery.isLoading ? "Loading images…" : "No images in this folder."}
+                  </p>
                   <p className="max-w-xs text-xs text-muted-foreground/80">
-                    Image-like objects under the prefix render here as base64 data URLs.
+                    Image files in the selected folder appear here as thumbnails.
                   </p>
                 </div>
               )}
@@ -1077,13 +1099,19 @@ export default function Inspector() {
               <CardTitle className="flex items-center gap-2 text-sm font-medium">
                 <Database className="size-4 text-primary" />
                 Object sample
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {selectedPrefix || "(root)"}
+                </span>
               </CardTitle>
-              <Badge variant="secondary" className="tabular-nums" data-testid="badge-object-count">
-                {result?.objects_sample.length ?? 0} rows
-              </Badge>
+              <div className="flex items-center gap-2">
+                {folderContentsQuery.isFetching && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+                <Badge variant="secondary" className="tabular-nums" data-testid="badge-object-count">
+                  {folderObjects.length} rows
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent className="px-0 pb-0">
-              {result && result.objects_sample.length > 0 ? (
+              {folderObjects.length > 0 ? (
                 <div className="max-h-[28rem] overflow-auto">
                   <Table>
                     <TableHeader className="sticky top-0 bg-card">
@@ -1095,7 +1123,7 @@ export default function Inspector() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {result.objects_sample.map((row, i) => (
+                      {folderObjects.map((row, i) => (
                         <TableRow key={`${row.key}-${i}`} data-testid={`row-object-${i}`}>
                           <TableCell className="max-w-[28rem] truncate font-mono text-xs" title={row.key}>
                             {row.key}
@@ -1114,7 +1142,9 @@ export default function Inspector() {
                 </div>
               ) : (
                 <div className="flex h-40 items-center justify-center px-5 text-sm text-muted-foreground">
-                  No objects to show. Run the check to populate.
+                  {folderContentsQuery.isLoading
+                    ? "Loading objects…"
+                    : `No objects in ${selectedPrefix || "root"}.`}
                 </div>
               )}
             </CardContent>
