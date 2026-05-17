@@ -450,6 +450,34 @@ export default function Inspector() {
   const folderImages = folderContentsQuery.data?.image_previews ?? [];
   const folderObjects = folderContentsQuery.data?.objects ?? [];
 
+  const folderImageKeys = useMemo(
+    () => folderImages.filter((img) => !img.base64).map((img) => img.key),
+    [folderImages]
+  );
+
+  const folderThumbQuery = useQuery<{ ok: boolean; results?: Array<{ ok: boolean; key: string; base64?: string; mime?: string }> }>({
+    queryKey: ["/api/garage-images", folderImageKeys],
+    enabled: folderImageKeys.length > 0,
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-images", { keys: folderImageKeys, width: 240 });
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  const folderThumbMap = useMemo(() => {
+    const map: Record<string, { base64: string; mime: string }> = {};
+    if (folderThumbQuery.data?.ok && Array.isArray(folderThumbQuery.data.results)) {
+      for (const item of folderThumbQuery.data.results) {
+        if (item.ok && item.key && item.base64) {
+          map[item.key] = { base64: item.base64, mime: item.mime! };
+        }
+      }
+    }
+    return map;
+  }, [folderThumbQuery.data]);
+
   const selectedFilesSize = useMemo(
     () => selectedFiles.reduce((sum, file) => sum + file.size, 0),
     [selectedFiles]
@@ -696,6 +724,8 @@ export default function Inspector() {
         <FolderContents
           prefix={selectedPrefix}
           enabled={prefixDiscoveryReady}
+          thumbMap={folderThumbMap}
+          thumbsLoading={folderThumbQuery.isPending && folderImageKeys.length > 0}
           onSelectImage={(img, thumb) => {
             setSelectedImage(img);
             setSelectedThumb(thumb ?? null);
@@ -1006,8 +1036,8 @@ export default function Inspector() {
                         key={img.key}
                         img={img}
                         index={i}
-                        thumbData={img.base64 ? { base64: img.base64, mime: img.mime } : undefined}
-                        batchLoading={false}
+                        thumbData={img.base64 ? { base64: img.base64, mime: img.mime } : folderThumbMap[img.key]}
+                        batchLoading={folderThumbQuery.isPending && folderImageKeys.length > 0}
                         onSelect={(thumb) => {
                           setSelectedImage(img);
                           setSelectedThumb(thumb ?? null);
@@ -1212,10 +1242,10 @@ function WorkflowDiagram() {
 
       {open && (
         <CardContent className="space-y-6 pt-1">
-          {/* ── Path 1: Direct (browse / list) ─────────────────────── */}
+          {/* ── All operations — worker path ─────────────────────────── */}
           <div className="space-y-2">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Browse &amp; list — direct path
+              All operations — GridWeave worker path
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <FlowNode
@@ -1225,41 +1255,6 @@ function WorkflowDiagram() {
                 icon={<Monitor className="size-5" />}
               />
               <FlowArrow label="HTTP" />
-              <FlowNode
-                label="App Server"
-                sublabel="Express / Node"
-                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
-                icon={<Server className="size-5" />}
-              />
-              <FlowArrow label="boto3" />
-              <FlowNode
-                label="Garage S3"
-                sublabel="Object store"
-                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-                icon={<Database className="size-5" />}
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground pl-1">
-              Used for: folder browser, sub-folder listing, folder contents, image thumbnails.
-              The app server calls Garage directly with boto3 — no GridWeave involved.
-            </p>
-          </div>
-
-          <div className="border-t border-border" />
-
-          {/* ── Path 2: Worker (upload / create folder / run check) ── */}
-          <div className="space-y-2">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Upload / Create folder / Run check — worker path
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <FlowNode
-                label="Browser"
-                sublabel="React UI"
-                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                icon={<Monitor className="size-5" />}
-              />
-              <FlowArrow label="HTTP + payload" />
               <FlowNode
                 label="App Server"
                 sublabel="Express / Node"
@@ -1280,7 +1275,7 @@ function WorkflowDiagram() {
                 color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
                 icon={<Cpu className="size-5" />}
               />
-              <FlowArrow label="s3fs / boto3" />
+              <FlowArrow label="boto3 / s3fs" />
               <FlowNode
                 label="Garage S3"
                 sublabel="Object store"
@@ -1289,11 +1284,29 @@ function WorkflowDiagram() {
               />
             </div>
             <p className="text-[10px] text-muted-foreground pl-1">
-              Used for: worker upload, create folder, run check.
-              The app server <strong>never</strong> writes to Garage directly.
-              File bytes and folder names travel to the remote GPU worker via GridWeave,
-              and only the worker holds S3 credentials at runtime.
+              Every operation — folder browsing, object listing, image thumbnails, uploads,
+              folder creation, and run checks — is dispatched through the GridWeave SDK to a
+              remote GPU worker. The app server never contacts Garage/S3 directly.
             </p>
+          </div>
+
+          {/* ── Operation types ──────────────────────────────────────── */}
+          <div className="grid gap-3 sm:grid-cols-2 border-t border-border pt-4">
+            {[
+              { label: "Browse / List", desc: "Folder browser, sub-folder listing, object listing" },
+              { label: "Image previews", desc: "Thumbnail generation and full image fetch" },
+              { label: "Upload files", desc: "File bytes travel via GridWeave to the worker" },
+              { label: "Create folder", desc: "Zero-byte marker object written by the worker" },
+              { label: "Run check", desc: "GPU info, S3 connectivity, pandas version" },
+            ].map(({ label, desc }) => (
+              <div key={label} className="flex items-start gap-2 text-[10px]">
+                <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-emerald-500" />
+                <div>
+                  <span className="font-semibold text-foreground">{label}: </span>
+                  <span className="text-muted-foreground">{desc}</span>
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* ── Legend ──────────────────────────────────────────────── */}
@@ -1321,10 +1334,14 @@ const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
 function FolderContents({
   prefix,
   enabled,
+  thumbMap,
+  thumbsLoading,
   onSelectImage,
 }: {
   prefix: string;
   enabled: boolean;
+  thumbMap: Record<string, { base64: string; mime: string }>;
+  thumbsLoading: boolean;
   onSelectImage: (img: ImagePreview, thumb: { base64: string; mime: string } | undefined) => void;
 }) {
   const [selectedObj, setSelectedObj] = useState<ObjectSampleRow | null>(null);
@@ -1342,9 +1359,6 @@ function FolderContents({
 
   const objects = contentsQuery.data?.objects ?? [];
   const imagePreviews = contentsQuery.data?.image_previews ?? [];
-  const thumbMap = Object.fromEntries(
-    imagePreviews.filter((p) => p.base64).map((p) => [p.key, { base64: p.base64!, mime: p.mime }])
-  );
 
   if (!enabled) return null;
 
@@ -1367,27 +1381,32 @@ function FolderContents({
         {/* Image strip */}
         {imagePreviews.length > 0 && (
           <div className="flex gap-2 overflow-x-auto px-5 pb-1">
-            {imagePreviews.map((img, i) => (
-              <button
-                key={img.key}
-                onClick={() => onSelectImage(img, thumbMap[img.key])}
-                className="group shrink-0 overflow-hidden rounded-md border border-border bg-muted transition hover:border-primary/60"
-                title={img.key}
-                data-testid={`button-fc-image-${i}`}
-              >
-                {img.base64 ? (
-                  <img
-                    src={`data:${img.mime};base64,${img.base64}`}
-                    alt={img.key}
-                    className="h-20 w-20 object-cover transition group-hover:scale-[1.04]"
-                  />
-                ) : (
-                  <div className="flex h-20 w-20 items-center justify-center">
-                    <ImageIcon className="size-6 text-muted-foreground/40" />
-                  </div>
-                )}
-              </button>
-            ))}
+            {imagePreviews.map((img, i) => {
+              const thumb = img.base64 ? { base64: img.base64, mime: img.mime } : thumbMap[img.key];
+              return (
+                <button
+                  key={img.key}
+                  onClick={() => onSelectImage(img, thumb)}
+                  className="group shrink-0 overflow-hidden rounded-md border border-border bg-muted transition hover:border-primary/60"
+                  title={img.key}
+                  data-testid={`button-fc-image-${i}`}
+                >
+                  {thumb ? (
+                    <img
+                      src={`data:${thumb.mime};base64,${thumb.base64}`}
+                      alt={img.key}
+                      className="h-20 w-20 object-cover transition group-hover:scale-[1.04]"
+                    />
+                  ) : (
+                    <div className="flex h-20 w-20 items-center justify-center">
+                      {thumbsLoading
+                        ? <Loader2 className="size-5 animate-spin text-muted-foreground/40" />
+                        : <ImageIcon className="size-6 text-muted-foreground/40" />}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -1418,7 +1437,7 @@ function FolderContents({
                       onClick={() => {
                         if (isImg) {
                           const img: ImagePreview = { key: row.key, mime: thumbMap[row.key]?.mime || "image/jpeg", base64: thumbMap[row.key]?.base64 };
-                          onSelectImage(img, thumbMap[row.key]);
+                          onSelectImage(img, thumbMap[row.key] ?? undefined);
                         } else {
                           setSelectedObj(row);
                         }

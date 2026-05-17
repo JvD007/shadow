@@ -47,10 +47,10 @@ function resolvePy(name: string): string {
 const REAL_SCRIPT = resolvePy("gridweave_check.py");
 const DEMO_SCRIPT = resolvePy("gridweave_demo.py");
 const PREFIX_SCRIPT = resolvePy("garage_prefixes.py");
-const PREFIX_DIRECT_SCRIPT = resolvePy("garage_prefixes_direct.py");
+const PREFIX_WORKER_SCRIPT = resolvePy("garage_prefixes_worker.py");
 const WRITE_SCRIPT = resolvePy("garage_write.py");
 const IMAGE_SCRIPT = resolvePy("garage_image.py");
-const OBJECTS_SCRIPT = resolvePy("garage_objects_direct.py");
+const OBJECTS_SCRIPT = resolvePy("garage_objects_worker.py");
 
 const VENDORS: AcceleratorVendor[] = ["NVIDIA", "AMD", "Axelera", "Lumai"];
 
@@ -298,7 +298,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : (process.env.GARAGE_PREFIX || "");
       const job: JobConfig = { vendor: "NVIDIA", vram: "2GB", prefix };
-      const r = await runPython(PREFIX_DIRECT_SCRIPT, job, PYTHON_TIMEOUT_MS);
+      const r = await runPython(PREFIX_WORKER_SCRIPT, job, PYTHON_TIMEOUT_MS, sessionToken(req));
       stdout = r.stdout;
       stderr = r.stderr;
       exitCode = r.code;
@@ -326,7 +326,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : (process.env.GARAGE_PREFIX || "");
     const job: JobConfig = { vendor: "NVIDIA", vram: "2GB", prefix };
     try {
-      const r = await runPython(OBJECTS_SCRIPT, job, PYTHON_TIMEOUT_MS);
+      const r = await runPython(OBJECTS_SCRIPT, job, PYTHON_TIMEOUT_MS, sessionToken(req));
       return res.status(200).json(parsePythonJson(r.stdout));
     } catch (e: any) {
       return res.status(200).json({
@@ -343,8 +343,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (keys.length === 0) return res.status(200).json({ ok: true, results: [] });
     const width = typeof req.body?.width === "number" ? req.body.width : 240;
     const job: JobConfig = { vendor: "NVIDIA", vram: "2GB" };
+    const token = sessionToken(req);
     try {
-      const r = await runPythonWithInput(IMAGE_SCRIPT, job, { keys, width }, sessionToken(req));
+      const r = await runPythonWithInput(IMAGE_SCRIPT, job, { keys, width }, token);
       return res.status(200).json(parsePythonJson(r.stdout));
     } catch (e: any) {
       return res.status(200).json({
@@ -480,7 +481,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (width > 0) payload.width = width;
     let stderr = "";
     try {
-      const r = await runPythonWithInput(IMAGE_SCRIPT, job, payload);
+      const r = await runPythonWithInput(IMAGE_SCRIPT, job, payload, sessionToken(req));
       stderr = r.stderr;
       return res.status(200).json(parsePythonJson(r.stdout) as GarageImageResponse | GarageImageError);
     } catch (e: any) {
