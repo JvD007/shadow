@@ -45,6 +45,8 @@ def main() -> None:
     bucket = os.environ.get("GARAGE_BUCKET", "demo-bucket")
     prefix = os.environ.get("GARAGE_PREFIX", "demo/")
     endpoint = os.environ.get("GARAGE_ENDPOINT_URL", "https://garage.example.com")
+    vendor = os.environ.get("GRIDWEAVE_JOB_VENDOR", "NVIDIA")
+    vram = os.environ.get("GRIDWEAVE_JOB_VRAM", "2GB")
     now = _dt.datetime.utcnow()
 
     palette = [
@@ -81,10 +83,14 @@ def main() -> None:
     output_text = "\n".join(
         [
             "[demo mode] No real GridWeave call was made.",
+            f"GridWeave vendor: {vendor}",
+            f"GridWeave VRAM request: {vram}",
+            "Server model: Dell Inc. PowerEdge R750",
+            "CPU cores: 64",
+            "Total memory GB: 512.0",
             "nvidia-smi -L:",
             "GPU 0: NVIDIA A10 (UUID: GPU-demo-0000)",
             "GPU 1: NVIDIA A10 (UUID: GPU-demo-0001)",
-            "CUDA_VISIBLE_DEVICES=0,1",
             "pandas version: 2.2.2",
             f"Garage endpoint: {endpoint}",
             f"Bucket: {bucket}  Prefix: {prefix!r}",
@@ -101,6 +107,16 @@ def main() -> None:
             "output_text": output_text,
             "objects_sample": objects_sample,
             "image_previews": images,
+            "server_info": {
+                "model": "Dell Inc. PowerEdge R750",
+                "cpu_cores": 64,
+                "memory_gb": 512.0,
+            },
+            "job_config": {
+                "vendor": vendor,
+                "vram": vram,
+                "prefix": prefix,
+            },
         },
     }
     sys.stdout.write(json.dumps(payload))
