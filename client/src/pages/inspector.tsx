@@ -270,6 +270,13 @@ export default function Inspector() {
   const [writeResponse, setWriteResponse] = useState<GarageWriteResponse | null>(null);
   const [flowTimings, setFlowTimings] = useState<FlowTimings | null>(null);
 
+  const flowDispatchMs = useMemo(() => {
+    if (flowTimings?.job_ms != null && flowTimings?.s3_ms != null) {
+      return Math.max(0, flowTimings.job_ms - flowTimings.s3_ms);
+    }
+    return undefined;
+  }, [flowTimings]);
+
   const config = useQuery<ConfigInfo>({
     queryKey: ["/api/gridweave-config"],
   });
@@ -750,6 +757,16 @@ export default function Inspector() {
           lastOp={lastOp}
           flowTimings={flowTimings}
         />
+
+        {/* Dedicated timing card — separate from Active Operations */}
+        {hasRun && flowTimings && (
+          <TimingFlowCard
+            flowTimings={flowTimings}
+            dispatchMs={flowDispatchMs}
+            bucket={config.data?.bucket ?? ""}
+            prefix={selectedPrefix}
+          />
+        )}
 
         {/* Folder browser + contents */}
         <FolderBrowser
@@ -1266,6 +1283,105 @@ function FlowArrow({ label, dir = "right" }: { label?: string; dir?: "right" | "
         ? <ArrowRight className="size-4 text-muted-foreground" />
         : <ArrowLeft  className="size-4 text-muted-foreground" />}
     </div>
+  );
+}
+
+function TimingFlowCard({
+  flowTimings,
+  dispatchMs,
+  bucket,
+  prefix,
+}: {
+  flowTimings: FlowTimings;
+  dispatchMs?: number;
+  bucket: string;
+  prefix: string;
+}) {
+  const nodes = [
+    { label: "Browser",    color: "border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300" },
+    { label: "App Server", color: "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-300" },
+    { label: "GridWeave",  color: "border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300" },
+    { label: "Worker",     color: "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+    { label: "Garage S3",  color: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+  ];
+  const connectors = [
+    { timing: flowTimings.http_ms,  label: "HTTP" },
+    { timing: flowTimings.auth_ms,  label: "SDK auth" },
+    { timing: dispatchMs,           label: "dispatch" },
+    { timing: flowTimings.s3_ms,    label: "S3 operation" },
+  ];
+
+  return (
+    <Card className="border-card-border" data-testid="card-timing-flow">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <Workflow className="size-4 text-primary" />
+          Layer timing
+          {bucket && (
+            <span className="font-mono text-[11px] font-normal text-muted-foreground">
+              s3://{bucket}/{prefix}
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Pipeline row */}
+        <div className="flex items-center overflow-x-auto rounded-xl border border-border bg-muted/10 p-4">
+          {nodes.map((node, i) => (
+            <Fragment key={i}>
+              {/* Node chip */}
+              <div className={`shrink-0 rounded-lg border-2 px-4 py-2 text-center text-xs font-bold whitespace-nowrap ${node.color}`}>
+                {node.label}
+              </div>
+
+              {/* Connector with timing */}
+              {i < connectors.length && (() => {
+                const { timing, label } = connectors[i];
+                return (
+                  <div className="flex min-w-[110px] flex-1 flex-col items-center gap-1.5 px-2">
+                    {/* Timing badge — always visible */}
+                    <span className={`rounded-lg border-2 px-3 py-1 text-sm font-mono font-bold whitespace-nowrap tabular-nums ${
+                      timing != null
+                        ? "border-primary/60 bg-primary/15 text-primary"
+                        : "border-border bg-muted/50 text-muted-foreground"
+                    }`}>
+                      {timing != null ? fmtMs(timing) : "— ms"}
+                    </span>
+                    {/* Arrow line */}
+                    <div className="flex w-full items-center">
+                      <div className="h-0.5 flex-1 bg-border" />
+                      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+                    </div>
+                    {/* Label */}
+                    <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                      {label}
+                    </span>
+                  </div>
+                );
+              })()}
+            </Fragment>
+          ))}
+        </div>
+
+        {/* Summary row */}
+        <div className="flex flex-wrap gap-4 text-xs">
+          {[
+            { label: "HTTP round-trip", value: flowTimings.http_ms, color: "text-sky-600 dark:text-sky-400" },
+            { label: "SDK auth",        value: flowTimings.auth_ms, color: "text-violet-600 dark:text-violet-400" },
+            { label: "Worker job",      value: flowTimings.job_ms,  color: "text-emerald-600 dark:text-emerald-400" },
+            { label: "S3 operation",    value: flowTimings.s3_ms,   color: "text-amber-600 dark:text-amber-400" },
+            { label: "Server total",    value: flowTimings.total_ms, color: "text-blue-600 dark:text-blue-400" },
+          ].filter(t => t.value != null).map(({ label, value, color }) => (
+            <div key={label} className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">{label}:</span>
+              <span className={`font-mono font-bold tabular-nums ${color}`}>
+                {fmtMs(value!)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
