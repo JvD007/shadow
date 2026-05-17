@@ -105,6 +105,7 @@ export interface RunCheckSuccess {
   finishedAt: string;
   elapsedMs: number;
   result: GridWeaveResult;
+  timings?: LayerTimings;
 }
 
 export interface RunCheckError {

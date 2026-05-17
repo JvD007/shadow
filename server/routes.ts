@@ -235,6 +235,7 @@ async function handleRun(req: Request, res: Response, opts: { demo?: boolean } =
       finishedAt: finishedAt.toISOString(),
       elapsedMs,
       result: parsed.result,
+      ...(parsed.timings ? { timings: parsed.timings } : {}),
     } satisfies RunCheckResponse);
   }
 

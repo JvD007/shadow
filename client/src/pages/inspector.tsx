@@ -340,7 +340,8 @@ export default function Inspector() {
       });
       const data = (await res.json()) as RunCheckResponse;
       const http_ms = Math.round(performance.now() - t0);
-      setFlowTimings((prev) => ({ ...(prev ?? {}), http_ms }));
+      const serverTimings = data.ok ? (data as import("@shared/schema").RunCheckSuccess).timings : undefined;
+      setFlowTimings((prev) => ({ ...(prev ?? {}), ...(serverTimings ?? {}), http_ms }));
       return data;
     },
     onMutate: () => {
