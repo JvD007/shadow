@@ -11,6 +11,10 @@ data.db-journal
 .env
 .env.*
 !.env.example
+org.env
+*.env
+
+.venv/
 
 *.log
 .DS_Store
