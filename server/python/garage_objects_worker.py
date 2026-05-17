@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import time
 import traceback
 from typing import Any
 
@@ -71,6 +72,7 @@ def _friendly_remote_error(exc: Exception) -> tuple[str, str] | None:
 
 
 def main() -> None:
+    t_start = time.perf_counter()
     cfg = _read_env()
 
     try:
@@ -84,13 +86,16 @@ def main() -> None:
         if auth_fn is None:
             _err("auth_failed", "gridweave SDK has neither auth() nor authenticate().")
             return
+        t_auth = time.perf_counter()
         auth_fn(cfg["token"], platform_url=cfg["platform_url"])
+        auth_ms = round((time.perf_counter() - t_auth) * 1000)
     except Exception as exc:
         _err("auth_failed", f"gridweave authentication failed: {exc!r}")
         return
 
     def _list_objects() -> dict[str, Any]:
         import os as _os
+        import time as _t
 
         import boto3  # type: ignore
         from botocore.config import Config as _Cfg  # type: ignore
@@ -117,6 +122,7 @@ def main() -> None:
         if prefix:
             page_kwargs["Prefix"] = prefix
 
+        t_s3 = _t.perf_counter()
         for page in paginator.paginate(**page_kwargs):
             for obj in page.get("Contents") or []:
                 key = obj.get("Key", "")
@@ -135,6 +141,7 @@ def main() -> None:
                     break
             if len(objects) >= _max_objects:
                 break
+        s3_ms = round((_t.perf_counter() - t_s3) * 1000)
 
         # Return image keys without base64 — thumbnails are fetched separately
         # by the UI via /api/garage-images to keep listing fast.
@@ -146,10 +153,12 @@ def main() -> None:
             "prefix": prefix,
             "objects": objects,
             "image_previews": image_previews,
+            "_s3_ms": s3_ms,
         }
 
     try:
         remote_fn = gridweave.remote(vram=cfg["job_vram"], vendor=cfg["job_vendor"])(_list_objects)
+        t_job = time.perf_counter()
         if hasattr(gridweave, "run"):
             result = gridweave.run(remote_fn)
         elif hasattr(remote_fn, "remote"):
@@ -158,6 +167,7 @@ def main() -> None:
             result = remote_fn()
         if not isinstance(result, dict) and hasattr(result, "get"):
             result = result.get()
+        job_ms = round((time.perf_counter() - t_job) * 1000)
     except Exception as exc:
         friendly = _friendly_remote_error(exc)
         if friendly:
@@ -166,6 +176,14 @@ def main() -> None:
         _err("remote_failed", f"Worker object listing failed: {exc!r}")
         return
 
+    s3_ms = result.pop("_s3_ms", None)
+    total_ms = round((time.perf_counter() - t_start) * 1000)
+    result["timings"] = {
+        "auth_ms": auth_ms,
+        "job_ms": job_ms,
+        "s3_ms": s3_ms,
+        "total_ms": total_ms,
+    }
     _emit(result)
 
 

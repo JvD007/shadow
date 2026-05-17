@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import {
   AlertCircle,
+  ArrowLeft,
   ArrowRight,
   CheckCircle2,
   Cpu,
@@ -63,13 +64,28 @@ import type {
   GaragePrefixListResponse,
   GarageWriteResponse,
   ImagePreview,
+  LayerTimings,
   ObjectSampleRow,
   RunCheckResponse,
 } from "@shared/schema";
 
+interface FlowTimings extends LayerTimings {
+  http_ms?: number;
+}
+
 type Status = "idle" | "running" | "success" | "error";
+type LastOp = "run_check" | "demo" | "browse" | "upload" | "create_folder";
+
 const ACCELERATOR_VENDORS: AcceleratorVendor[] = ["NVIDIA", "AMD", "Axelera", "Lumai"];
 const ROOT_PREFIX_VALUE = "__root__";
+
+const OP_META: Record<LastOp, { title: string; workerDesc: string; s3Label: string; returnLabel: string }> = {
+  run_check:     { title: "Run Check",     workerDesc: "GPU probe · list_objects", s3Label: "list_objects_v2", returnLabel: "objects · GPU data" },
+  demo:          { title: "Demo Run",      workerDesc: "synthetic data (no S3)",   s3Label: "— demo",          returnLabel: "synthetic result" },
+  browse:        { title: "Browse Folder", workerDesc: "list_objects_v2",          s3Label: "list_objects_v2", returnLabel: "prefixes · objects" },
+  upload:        { title: "Upload Files",  workerDesc: "s3fs PutObject",           s3Label: "PutObject",       returnLabel: "write confirmed" },
+  create_folder: { title: "Create Folder", workerDesc: "s3fs PutObject",           s3Label: "PutObject",       returnLabel: "folder created" },
+};
 
 interface ConfigInfo {
   hasToken: boolean;
@@ -239,6 +255,8 @@ export default function Inspector() {
     queryClient.clear();
     navigate("/login");
   }
+  const [hasRun, setHasRun] = useState(false);
+  const [lastOp, setLastOp] = useState<LastOp | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [response, setResponse] = useState<RunCheckResponse | null>(null);
   const [jobVendor, setJobVendor] = useState<AcceleratorVendor>("NVIDIA");
@@ -250,6 +268,7 @@ export default function Inspector() {
   const [folderName, setFolderName] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [writeResponse, setWriteResponse] = useState<GarageWriteResponse | null>(null);
+  const [flowTimings, setFlowTimings] = useState<FlowTimings | null>(null);
 
   const config = useQuery<ConfigInfo>({
     queryKey: ["/api/gridweave-config"],
@@ -269,7 +288,7 @@ export default function Inspector() {
 
   const prefixQuery = useQuery<GaragePrefixListResponse>({
     queryKey: ["/api/garage-prefixes", jobVendor, jobVram],
-    enabled: prefixDiscoveryReady,
+    enabled: hasRun && prefixDiscoveryReady,
     queryFn: async () => {
       const res = await apiRequest("POST", "/api/garage-prefixes", {
         vendor: jobVendor,
@@ -438,10 +457,16 @@ export default function Inspector() {
   }, [batchThumbQuery.data]);
   const folderContentsQuery = useQuery<FolderContentsResponse>({
     queryKey: ["/api/garage-objects", selectedPrefix],
-    enabled: prefixDiscoveryReady,
+    enabled: hasRun && prefixDiscoveryReady,
     queryFn: async () => {
+      const t0 = performance.now();
       const res = await apiRequest("POST", "/api/garage-objects", { prefix: selectedPrefix });
-      return res.json();
+      const data: FolderContentsResponse = await res.json();
+      const http_ms = Math.round(performance.now() - t0);
+      if (data.ok) {
+        setFlowTimings({ ...(data.timings ?? {}), http_ms });
+      }
+      return data;
     },
     staleTime: 60 * 1000,
     retry: false,
@@ -457,7 +482,7 @@ export default function Inspector() {
 
   const folderThumbQuery = useQuery<{ ok: boolean; results?: Array<{ ok: boolean; key: string; base64?: string; mime?: string }> }>({
     queryKey: ["/api/garage-images", folderImageKeys],
-    enabled: folderImageKeys.length > 0,
+    enabled: hasRun && folderImageKeys.length > 0,
     queryFn: async () => {
       const res = await apiRequest("POST", "/api/garage-images", { keys: folderImageKeys, width: 240 });
       return res.json();
@@ -617,7 +642,7 @@ export default function Inspector() {
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <Button
                   size="lg"
-                  onClick={() => run.mutate("real")}
+                  onClick={() => { setHasRun(true); setLastOp("run_check"); run.mutate("real"); }}
                   disabled={run.isPending}
                   data-testid="button-run-check"
                   className="gap-2"
@@ -632,7 +657,7 @@ export default function Inspector() {
                 <Button
                   size="lg"
                   variant="outline"
-                  onClick={() => run.mutate("demo")}
+                  onClick={() => { setHasRun(true); setLastOp("demo"); run.mutate("demo"); }}
                   disabled={run.isPending}
                   data-testid="button-run-demo"
                   className="gap-2"
@@ -712,18 +737,31 @@ export default function Inspector() {
         {/* Workflow diagram */}
         <WorkflowDiagram />
 
+        {/* Active operation flow — dynamic, only shown after Run Check */}
+        <ActiveFlowPanel
+          hasRun={hasRun}
+          status={status}
+          bucket={config.data?.bucket ?? ""}
+          prefix={selectedPrefix}
+          vendor={jobVendor}
+          vram={jobVram}
+          lastOp={lastOp}
+          flowTimings={flowTimings}
+        />
+
         {/* Folder browser + contents */}
         <FolderBrowser
           selectedPrefix={selectedPrefix}
           onSelect={(prefix) => {
             setPrefixTouched(true);
             setSelectedPrefix(prefix);
+            setLastOp("browse");
           }}
-          enabled={prefixDiscoveryReady}
+          enabled={hasRun && prefixDiscoveryReady}
         />
         <FolderContents
           prefix={selectedPrefix}
-          enabled={prefixDiscoveryReady}
+          enabled={hasRun && prefixDiscoveryReady}
           thumbMap={folderThumbMap}
           thumbsLoading={folderThumbQuery.isPending && folderImageKeys.length > 0}
           onSelectImage={(img, thumb) => {
@@ -789,7 +827,7 @@ export default function Inspector() {
               )}
               <div className="flex flex-wrap gap-3">
                 <Button
-                  onClick={() => uploadFiles.mutate()}
+                  onClick={() => { setLastOp("upload"); uploadFiles.mutate(); }}
                   disabled={writePending || selectedFiles.length === 0}
                   data-testid="button-upload-files"
                   className="gap-2"
@@ -831,7 +869,7 @@ export default function Inspector() {
                 />
               </label>
               <Button
-                onClick={() => createFolder.mutate()}
+                onClick={() => { setLastOp("create_folder"); createFolder.mutate(); }}
                 disabled={writePending || !folderName.trim()}
                 data-testid="button-create-folder"
                 className="w-full gap-2"
@@ -1213,11 +1251,18 @@ function FlowNode({
   );
 }
 
-function FlowArrow({ label }: { label?: string }) {
+function FlowArrow({ label, dir = "right", timing }: { label?: string; dir?: "right" | "left"; timing?: number }) {
   return (
     <div className="flex flex-col items-center justify-center gap-0.5 shrink-0">
       {label && <span className="text-[9px] font-medium text-muted-foreground whitespace-nowrap">{label}</span>}
-      <ArrowRight className="size-4 text-muted-foreground" />
+      {dir === "right"
+        ? <ArrowRight className="size-4 text-muted-foreground" />
+        : <ArrowLeft  className="size-4 text-muted-foreground" />}
+      {timing != null && (
+        <span className="text-[9px] font-mono text-primary/80 whitespace-nowrap tabular-nums">
+          {timing < 1000 ? `${timing}ms` : `${(timing / 1000).toFixed(1)}s`}
+        </span>
+      )}
     </div>
   );
 }
@@ -1323,6 +1368,200 @@ function WorkflowDiagram() {
               </div>
             ))}
           </div>
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+function ActiveFlowPanel({
+  hasRun,
+  status,
+  bucket,
+  prefix,
+  vendor,
+  vram,
+  lastOp,
+  flowTimings,
+}: {
+  hasRun: boolean;
+  status: Status;
+  bucket: string;
+  prefix: string;
+  vendor: AcceleratorVendor;
+  vram: string;
+  lastOp: LastOp | null;
+  flowTimings?: FlowTimings | null;
+}) {
+  const [open, setOpen] = useState(true);
+  if (!hasRun) return null;
+
+  const meta = lastOp ? OP_META[lastOp] : OP_META.browse;
+  const folderName = prefix
+    ? (prefix.replace(/\/$/, "").split("/").pop() || prefix)
+    : "(root)";
+  const s3Path = bucket ? `s3://${bucket}/${prefix}` : "(not configured)";
+  const isRunning = status === "running";
+
+  const dispatch_ms =
+    flowTimings?.job_ms != null && flowTimings?.s3_ms != null
+      ? Math.max(0, flowTimings.job_ms - flowTimings.s3_ms)
+      : undefined;
+
+  return (
+    <Card className="border-card-border" data-testid="card-active-flow">
+      <CardHeader className="pb-2">
+        <button
+          className="flex w-full items-center justify-between text-left"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Workflow className="size-4 text-primary" />
+            Active operation
+            {lastOp && (
+              <Badge variant="outline" className="ml-1 text-[10px]">
+                {meta.title}
+              </Badge>
+            )}
+            {isRunning && <Loader2 className="size-3 animate-spin text-primary" />}
+          </CardTitle>
+          <span className="text-[11px] text-muted-foreground">{open ? "Hide" : "Show"}</span>
+        </button>
+
+        {/* Live S3 path bar — always visible */}
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px]">
+          <Database className="size-3 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="flex-1 truncate font-mono text-foreground">{s3Path}</span>
+          {isRunning && <Loader2 className="size-3 animate-spin text-primary shrink-0" />}
+        </div>
+      </CardHeader>
+
+      {open && (
+        <CardContent className="space-y-3 pt-1">
+          {/* ── Request row (left → right) ────────────────────── */}
+          <div className="space-y-1">
+            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              Request ↓
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <FlowNode
+                label="Browser"
+                sublabel="GridWeave Inspector"
+                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                icon={<Monitor className="size-5" />}
+              />
+              <FlowArrow label="HTTP" timing={flowTimings?.http_ms} />
+              <FlowNode
+                label="App Server"
+                sublabel="Express / Node"
+                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                icon={<Server className="size-5" />}
+              />
+              <FlowArrow label="GridWeave SDK" timing={flowTimings?.auth_ms} />
+              <FlowNode
+                label="GridWeave"
+                sublabel={`${vendor} · ${vram}`}
+                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                icon={<Sparkles className="size-5" />}
+              />
+              <FlowArrow label="dispatch" timing={dispatch_ms} />
+              <FlowNode
+                label="Remote Worker"
+                sublabel={meta.workerDesc}
+                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                icon={isRunning ? <Loader2 className="size-5 animate-spin" /> : <Cpu className="size-5" />}
+              />
+              <FlowArrow label={meta.s3Label} timing={flowTimings?.s3_ms} />
+              <FlowNode
+                label={folderName}
+                sublabel={bucket ? `s3://${bucket}/` : "S3"}
+                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                icon={<Database className="size-5" />}
+              />
+            </div>
+          </div>
+
+          {/* ── Response row (right → left) ───────────────────── */}
+          <div className="space-y-1">
+            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              Response ↑
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <FlowNode
+                label={meta.title}
+                sublabel="GridWeave Inspector"
+                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                icon={<Monitor className="size-5" />}
+              />
+              <FlowArrow label="HTTP response" dir="left" timing={flowTimings?.http_ms} />
+              <FlowNode
+                label="App Server"
+                sublabel="JSON → browser"
+                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                icon={<Server className="size-5" />}
+              />
+              <FlowArrow label="JSON result" dir="left" timing={flowTimings?.total_ms} />
+              <FlowNode
+                label="GridWeave"
+                sublabel="job result"
+                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                icon={<Sparkles className="size-5" />}
+              />
+              <FlowArrow label="result" dir="left" timing={flowTimings?.job_ms} />
+              <FlowNode
+                label="Remote Worker"
+                sublabel="serialise result"
+                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                icon={<Cpu className="size-5" />}
+              />
+              <FlowArrow label={meta.returnLabel} dir="left" timing={flowTimings?.s3_ms} />
+              <FlowNode
+                label={folderName}
+                sublabel={bucket ? `s3://${bucket}/` : "S3"}
+                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                icon={<Database className="size-5" />}
+              />
+            </div>
+          </div>
+
+          {/* Status row */}
+          <div className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-[11px] ${
+            status === "success" ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300" :
+            status === "error"   ? "border-destructive/30 bg-destructive/5 text-destructive" :
+            status === "running" ? "border-primary/30 bg-primary/5 text-primary" :
+            "border-border bg-muted/30 text-muted-foreground"
+          }`}>
+            {status === "running" && <Loader2 className="size-3 animate-spin" />}
+            {status === "success" && <CheckCircle2 className="size-3" />}
+            {status === "error"   && <AlertCircle className="size-3" />}
+            {status === "idle"    && <span className="inline-block size-1.5 rounded-full bg-current opacity-50" />}
+            <span>
+              {status === "running" && `${meta.title} running on remote worker…`}
+              {status === "success" && `${meta.title} completed successfully.`}
+              {status === "error"   && `${meta.title} failed — see error panel above.`}
+              {status === "idle"    && lastOp && `Last: ${meta.title} · folder: ${s3Path}`}
+            </span>
+          </div>
+
+          {/* Timing summary */}
+          {flowTimings && (
+            <div className="flex flex-wrap gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-[10px]">
+              {[
+                { label: "HTTP round-trip", value: flowTimings.http_ms },
+                { label: "SDK auth", value: flowTimings.auth_ms },
+                { label: "Worker job", value: flowTimings.job_ms },
+                { label: "S3 operation", value: flowTimings.s3_ms },
+                { label: "Server total", value: flowTimings.total_ms },
+              ].filter(t => t.value != null).map(({ label, value }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="font-mono font-semibold text-foreground tabular-nums">
+                    {value! < 1000 ? `${value}ms` : `${(value! / 1000).toFixed(1)}s`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       )}
     </Card>

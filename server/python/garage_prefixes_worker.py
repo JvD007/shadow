@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import time
 import traceback
 from typing import Any
 
@@ -72,6 +73,7 @@ def _friendly_remote_error(exc: Exception) -> tuple[str, str] | None:
 
 
 def main() -> None:
+    t_start = time.perf_counter()
     cfg = _read_env()
 
     try:
@@ -85,12 +87,16 @@ def main() -> None:
         if auth_fn is None:
             _err("auth_failed", "gridweave SDK has neither auth() nor authenticate().", cfg["bucket"])
             return
+        t_auth = time.perf_counter()
         auth_fn(cfg["token"], platform_url=cfg["platform_url"])
+        auth_ms = round((time.perf_counter() - t_auth) * 1000)
     except Exception as exc:
         _err("auth_failed", f"gridweave authentication failed: {exc!r}", cfg["bucket"])
         return
 
     def _list_prefixes() -> dict[str, Any]:
+        import time as _t
+
         import boto3  # type: ignore
         from botocore.config import Config as _Cfg  # type: ignore
 
@@ -113,20 +119,24 @@ def main() -> None:
         if configured_prefix:
             kwargs["Prefix"] = configured_prefix
 
+        t_s3 = _t.perf_counter()
         for page in paginator.paginate(**kwargs):
             for cp in page.get("CommonPrefixes") or []:
                 if cp.get("Prefix"):
                     prefixes.add(cp["Prefix"])
+        s3_ms = round((_t.perf_counter() - t_s3) * 1000)
 
         return {
             "ok": True,
             "bucket": cfg["bucket"],
             "listing_prefix": configured_prefix,
             "prefixes": sorted(prefixes, key=lambda p: ("" if p == "" else p.lower(), p == "")),
+            "_s3_ms": s3_ms,
         }
 
     try:
         remote_fn = gridweave.remote(vram=cfg["job_vram"], vendor=cfg["job_vendor"])(_list_prefixes)
+        t_job = time.perf_counter()
         if hasattr(gridweave, "run"):
             result = gridweave.run(remote_fn)
         elif hasattr(remote_fn, "remote"):
@@ -135,6 +145,7 @@ def main() -> None:
             result = remote_fn()
         if not isinstance(result, dict) and hasattr(result, "get"):
             result = result.get()
+        job_ms = round((time.perf_counter() - t_job) * 1000)
     except Exception as exc:
         friendly = _friendly_remote_error(exc)
         if friendly:
@@ -143,6 +154,14 @@ def main() -> None:
         _err("remote_failed", f"Worker prefix listing failed: {exc!r}", cfg["bucket"])
         return
 
+    s3_ms = result.pop("_s3_ms", None)
+    total_ms = round((time.perf_counter() - t_start) * 1000)
+    result["timings"] = {
+        "auth_ms": auth_ms,
+        "job_ms": job_ms,
+        "s3_ms": s3_ms,
+        "total_ms": total_ms,
+    }
     _emit(result)
 
 
