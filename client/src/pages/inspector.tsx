@@ -1269,31 +1269,18 @@ function FlowArrow({ label, dir = "right" }: { label?: string; dir?: "right" | "
   );
 }
 
-/** Timed arrow for the ActiveFlowPanel — timing badge on top, arrow in middle, label below. */
-function ActiveFlowArrow({ label, dir = "right", timing }: { label?: string; dir?: "right" | "left"; timing?: number }) {
+function TimingBadge({ value }: { value?: number }) {
+  if (value != null) {
+    return (
+      <span className="rounded-lg border-2 border-primary/70 bg-primary/15 px-3 py-1.5 text-sm font-mono font-bold text-primary whitespace-nowrap tabular-nums shadow-sm">
+        {fmtMs(value)}
+      </span>
+    );
+  }
   return (
-    <div className="flex flex-col items-center gap-1.5 shrink-0 min-w-[80px]">
-      {/* ── Timing badge — top, most prominent ── */}
-      {timing != null ? (
-        <span className="rounded-lg border-2 border-primary/70 bg-primary/15 px-3 py-1 text-xs font-mono font-bold text-primary whitespace-nowrap tabular-nums shadow-sm">
-          {fmtMs(timing)}
-        </span>
-      ) : (
-        <span className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/20 px-3 py-1 text-xs font-mono text-muted-foreground/60 whitespace-nowrap">
-          — ms
-        </span>
-      )}
-      {/* ── Arrow icon — vertically centered in the row ── */}
-      {dir === "right"
-        ? <ArrowRight className="size-5 text-muted-foreground" />
-        : <ArrowLeft  className="size-5 text-muted-foreground" />}
-      {/* ── Connection label — below arrow ── */}
-      {label && (
-        <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
-          {label}
-        </span>
-      )}
-    </div>
+    <span className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/20 px-3 py-1.5 text-sm font-mono text-muted-foreground/50 whitespace-nowrap">
+      — ms
+    </span>
   );
 }
 
@@ -1469,88 +1456,112 @@ function ActiveFlowPanel({
       {open && (
         <CardContent className="space-y-3 pt-1">
           {/* ── Request row (left → right) ────────────────────── */}
-          <div className="space-y-2">
-            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-              Request ↓
-            </p>
-            <div className="flex items-center gap-1 overflow-x-auto pb-1">
-              <FlowNode
-                label="Browser"
-                sublabel="GridWeave Inspector"
-                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                icon={<Monitor className="size-5" />}
-              />
-              <ActiveFlowArrow label="HTTP" timing={flowTimings?.http_ms} />
-              <FlowNode
-                label="App Server"
-                sublabel="Express / Node"
-                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
-                icon={<Server className="size-5" />}
-              />
-              <ActiveFlowArrow label="GridWeave SDK" timing={flowTimings?.auth_ms} />
-              <FlowNode
-                label="GridWeave"
-                sublabel={`${vendor} · ${vram}`}
-                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
-                icon={<Sparkles className="size-5" />}
-              />
-              <ActiveFlowArrow label="dispatch" timing={dispatch_ms} />
-              <FlowNode
-                label="Remote Worker"
-                sublabel={meta.workerDesc}
-                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-                icon={isRunning ? <Loader2 className="size-5 animate-spin" /> : <Cpu className="size-5" />}
-              />
-              <ActiveFlowArrow label={meta.s3Label} timing={flowTimings?.s3_ms} />
-              <FlowNode
-                label={folderName}
-                sublabel={bucket ? `s3://${bucket}/` : "S3"}
-                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-                icon={<Database className="size-5" />}
-              />
+          <div className="space-y-1">
+            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Request ↓</p>
+            <div className="overflow-x-auto pb-1">
+              <div
+                className="grid gap-x-2 gap-y-2 min-w-max"
+                style={{ gridTemplateColumns: "auto 96px auto 96px auto 96px auto 96px auto" }}
+              >
+                {/* ── Row 1: timing badges above each arrow ── */}
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.http_ms} /></div>
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.auth_ms} /></div>
+                <div />
+                <div className="flex justify-center"><TimingBadge value={dispatch_ms} /></div>
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.s3_ms} /></div>
+                <div />
+
+                {/* ── Row 2: nodes + arrows ── */}
+                <FlowNode label="Browser" sublabel="GridWeave Inspector"
+                  color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                  icon={<Monitor className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowRight className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">HTTP</span>
+                </div>
+                <FlowNode label="App Server" sublabel="Express / Node"
+                  color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                  icon={<Server className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowRight className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">GridWeave SDK</span>
+                </div>
+                <FlowNode label="GridWeave" sublabel={`${vendor} · ${vram}`}
+                  color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                  icon={<Sparkles className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowRight className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">dispatch</span>
+                </div>
+                <FlowNode label="Remote Worker" sublabel={meta.workerDesc}
+                  color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                  icon={isRunning ? <Loader2 className="size-5 animate-spin" /> : <Cpu className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowRight className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">{meta.s3Label}</span>
+                </div>
+                <FlowNode label={folderName} sublabel={bucket ? `s3://${bucket}/` : "S3"}
+                  color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                  icon={<Database className="size-5" />} />
+              </div>
             </div>
           </div>
 
           {/* ── Response row (right → left) ───────────────────── */}
-          <div className="space-y-2">
-            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-              Response ↑
-            </p>
-            <div className="flex items-center gap-1 overflow-x-auto pb-1">
-              <FlowNode
-                label={meta.title}
-                sublabel="GridWeave Inspector"
-                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                icon={<Monitor className="size-5" />}
-              />
-              <ActiveFlowArrow label="HTTP response" dir="left" timing={flowTimings?.http_ms} />
-              <FlowNode
-                label="App Server"
-                sublabel="JSON → browser"
-                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
-                icon={<Server className="size-5" />}
-              />
-              <ActiveFlowArrow label="server total" dir="left" timing={flowTimings?.total_ms} />
-              <FlowNode
-                label="GridWeave"
-                sublabel="job result"
-                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
-                icon={<Sparkles className="size-5" />}
-              />
-              <ActiveFlowArrow label="worker job" dir="left" timing={flowTimings?.job_ms} />
-              <FlowNode
-                label="Remote Worker"
-                sublabel="serialise result"
-                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-                icon={<Cpu className="size-5" />}
-              />
-              <ActiveFlowArrow label={meta.returnLabel} dir="left" timing={flowTimings?.s3_ms} />
-              <FlowNode
-                label={folderName}
-                sublabel={bucket ? `s3://${bucket}/` : "S3"}
-                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-                icon={<Database className="size-5" />}
-              />
+          <div className="space-y-1">
+            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Response ↑</p>
+            <div className="overflow-x-auto pb-1">
+              <div
+                className="grid gap-x-2 gap-y-2 min-w-max"
+                style={{ gridTemplateColumns: "auto 96px auto 96px auto 96px auto 96px auto" }}
+              >
+                {/* ── Row 1: timing badges above each arrow ── */}
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.http_ms} /></div>
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.total_ms} /></div>
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.job_ms} /></div>
+                <div />
+                <div className="flex justify-center"><TimingBadge value={flowTimings?.s3_ms} /></div>
+                <div />
+
+                {/* ── Row 2: nodes + arrows ── */}
+                <FlowNode label={meta.title} sublabel="GridWeave Inspector"
+                  color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                  icon={<Monitor className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowLeft className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">HTTP response</span>
+                </div>
+                <FlowNode label="App Server" sublabel="JSON → browser"
+                  color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                  icon={<Server className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowLeft className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">server total</span>
+                </div>
+                <FlowNode label="GridWeave" sublabel="job result"
+                  color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                  icon={<Sparkles className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowLeft className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">worker job</span>
+                </div>
+                <FlowNode label="Remote Worker" sublabel="serialise result"
+                  color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                  icon={<Cpu className="size-5" />} />
+                <div className="flex flex-col items-center justify-center gap-0.5">
+                  <ArrowLeft className="size-5 text-muted-foreground" />
+                  <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">{meta.returnLabel}</span>
+                </div>
+                <FlowNode label={folderName} sublabel={bucket ? `s3://${bucket}/` : "S3"}
+                  color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                  icon={<Database className="size-5" />} />
+              </div>
             </div>
           </div>
 
