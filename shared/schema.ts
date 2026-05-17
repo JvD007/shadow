@@ -41,18 +41,10 @@ export interface JobConfig {
   prefix?: string;
 }
 
-export interface LayerTimings {
-  auth_ms?: number;
-  job_ms?: number;
-  s3_ms?: number;
-  total_ms?: number;
-}
-
 export interface GaragePrefixListResponse {
   ok: boolean;
   prefixes: string[];
   bucket?: string;
-  timings?: LayerTimings;
   error?: { code: string; message: string };
 }
 
@@ -62,7 +54,6 @@ export interface FolderContentsResponse {
   prefix?: string;
   objects: ObjectSampleRow[];
   image_previews: ImagePreview[];
-  timings?: LayerTimings;
   error?: { code: string; message: string };
 }
 
@@ -105,7 +96,6 @@ export interface RunCheckSuccess {
   finishedAt: string;
   elapsedMs: number;
   result: GridWeaveResult;
-  timings?: LayerTimings;
 }
 
 export interface RunCheckError {

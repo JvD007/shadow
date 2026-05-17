@@ -39,7 +39,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 import traceback
 from typing import Any
 
@@ -147,7 +146,6 @@ def _read_env() -> dict[str, str]:
 
 
 def main() -> None:
-    t_start = time.perf_counter()
     cfg = _read_env()
 
     # Import gridweave lazily so missing-SDK errors are reported as structured
@@ -174,9 +172,7 @@ def main() -> None:
                 f"available attributes include: {', '.join(sorted(dir(gridweave))[:40])}",
             )
             return
-        t_auth = time.perf_counter()
         auth_fn(cfg["token"], platform_url=cfg["platform_url"])
-        auth_ms = round((time.perf_counter() - t_auth) * 1000)
     except Exception as exc:
         _err("auth_failed", f"gridweave authentication failed: {exc!r}")
         return
@@ -277,13 +273,10 @@ def main() -> None:
         log(f"Bucket: {cfg['bucket']}  Prefix: {cfg['prefix']!r}")
 
         # List all objects under prefix recursively
-        import time as _t
         bucket_path = cfg["bucket"]
         if cfg["prefix"]:
             bucket_path += "/" + cfg["prefix"].rstrip("/")
-        t_s3 = _t.perf_counter()
         raw = fs.find(bucket_path, detail=True)
-        s3_ms = round((_t.perf_counter() - t_s3) * 1000)
         entries: dict[str, Any] = raw if isinstance(raw, dict) else {e["name"]: e for e in raw}
 
         objects: list[dict[str, Any]] = []
@@ -348,13 +341,11 @@ def main() -> None:
                 "vram": cfg["job_vram"],
                 "prefix": cfg["prefix"],
             },
-            "_s3_ms": s3_ms,
         }
 
     try:
         multi_gpu_check = gridweave.remote(**remote_kwargs)(_multi_gpu_check)  # type: ignore[misc]
 
-        t_job = time.perf_counter()
         if hasattr(gridweave, "run"):
             result = gridweave.run(multi_gpu_check)
         elif hasattr(multi_gpu_check, "remote"):
@@ -366,7 +357,6 @@ def main() -> None:
         # dict.get() here; gridweave.run() may already return the final dict.
         if not isinstance(result, dict) and hasattr(result, "get"):
             result = result.get()
-        job_ms = round((time.perf_counter() - t_job) * 1000)
     except Exception as exc:
         friendly = _friendly_remote_error(exc, cfg)
         if friendly:
@@ -382,18 +372,7 @@ def main() -> None:
         _err("bad_result", f"unexpected result type: {type(result).__name__}")
         return
 
-    s3_ms = result.pop("_s3_ms", None)
-    total_ms = round((time.perf_counter() - t_start) * 1000)
-    _emit({
-        "ok": True,
-        "result": result,
-        "timings": {
-            "auth_ms": auth_ms,
-            "job_ms": job_ms,
-            "s3_ms": s3_ms,
-            "total_ms": total_ms,
-        },
-    })
+    _emit({"ok": True, "result": result})
 
 
 if __name__ == "__main__":

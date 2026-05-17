@@ -64,14 +64,9 @@ import type {
   GaragePrefixListResponse,
   GarageWriteResponse,
   ImagePreview,
-  LayerTimings,
   ObjectSampleRow,
   RunCheckResponse,
 } from "@shared/schema";
-
-interface FlowTimings extends LayerTimings {
-  http_ms?: number;
-}
 
 type Status = "idle" | "running" | "success" | "error";
 type LastOp = "run_check" | "demo" | "browse" | "upload" | "create_folder";
@@ -268,14 +263,6 @@ export default function Inspector() {
   const [folderName, setFolderName] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [writeResponse, setWriteResponse] = useState<GarageWriteResponse | null>(null);
-  const [flowTimings, setFlowTimings] = useState<FlowTimings | null>(null);
-
-  const flowDispatchMs = useMemo(() => {
-    if (flowTimings?.job_ms != null && flowTimings?.s3_ms != null) {
-      return Math.max(0, flowTimings.job_ms - flowTimings.s3_ms);
-    }
-    return undefined;
-  }, [flowTimings]);
 
   const config = useQuery<ConfigInfo>({
     queryKey: ["/api/gridweave-config"],
@@ -297,16 +284,12 @@ export default function Inspector() {
     queryKey: ["/api/garage-prefixes", jobVendor, jobVram],
     enabled: hasRun && prefixDiscoveryReady,
     queryFn: async () => {
-      const t0 = performance.now();
       const res = await apiRequest("POST", "/api/garage-prefixes", {
         vendor: jobVendor,
         vram: jobVram,
         prefix: selectedPrefix,
       });
-      const data = (await res.json()) as GaragePrefixListResponse;
-      const http_ms = Math.round(performance.now() - t0);
-      setFlowTimings((prev) => ({ ...(prev ?? {}), ...(data.timings ?? {}), http_ms }));
-      return data;
+      return (await res.json()) as GaragePrefixListResponse;
     },
   });
 
@@ -332,26 +315,16 @@ export default function Inspector() {
         mode === "demo"
           ? "/api/run-gridweave-check/demo"
           : "/api/run-gridweave-check";
-      const t0 = performance.now();
       const res = await apiRequest("POST", url, {
         vendor: jobVendor,
         vram: jobVram,
         prefix: selectedPrefix,
       });
-      const data = (await res.json()) as RunCheckResponse;
-      const http_ms = Math.round(performance.now() - t0);
-      const serverTimings = data.ok ? (data as import("@shared/schema").RunCheckSuccess).timings : undefined;
-      setFlowTimings((prev) => ({ ...(prev ?? {}), ...(serverTimings ?? {}), http_ms }));
-      return data;
+      return (await res.json()) as RunCheckResponse;
     },
     onMutate: () => {
       setStatus("running");
       setResponse(null);
-      // Show the timing card immediately with placeholders
-      setFlowTimings({});
-      // Force a fresh fetch of prefix/objects queries
-      queryClient.invalidateQueries({ queryKey: ["/api/garage-prefixes"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/garage-objects"] });
     },
     onSuccess: (data) => {
       setResponse(data);
@@ -479,12 +452,8 @@ export default function Inspector() {
     queryKey: ["/api/garage-objects", selectedPrefix],
     enabled: hasRun && prefixDiscoveryReady,
     queryFn: async () => {
-      const t0 = performance.now();
       const res = await apiRequest("POST", "/api/garage-objects", { prefix: selectedPrefix });
-      const data: FolderContentsResponse = await res.json();
-      const http_ms = Math.round(performance.now() - t0);
-      setFlowTimings((prev) => ({ ...(prev ?? {}), ...(data.timings ?? {}), http_ms }));
-      return data;
+      return (await res.json()) as FolderContentsResponse;
     },
     staleTime: 60 * 1000,
     retry: false,
@@ -764,18 +733,7 @@ export default function Inspector() {
           vendor={jobVendor}
           vram={jobVram}
           lastOp={lastOp}
-          flowTimings={flowTimings}
         />
-
-        {/* Dedicated timing card — separate from Active Operations */}
-        {hasRun && (
-          <TimingFlowCard
-            flowTimings={flowTimings ?? {}}
-            dispatchMs={flowDispatchMs}
-            bucket={config.data?.bucket ?? ""}
-            prefix={selectedPrefix}
-          />
-        )}
 
         {/* Folder browser + contents */}
         <FolderBrowser
@@ -1279,11 +1237,7 @@ function FlowNode({
   );
 }
 
-function fmtMs(ms: number): string {
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`;
-}
-
-/** Simple arrow for the static WorkflowDiagram — no timing. */
+/** Simple arrow for the static WorkflowDiagram. */
 function FlowArrow({ label, dir = "right" }: { label?: string; dir?: "right" | "left" }) {
   return (
     <div className="flex flex-col items-center justify-center gap-0.5 shrink-0">
@@ -1291,143 +1245,6 @@ function FlowArrow({ label, dir = "right" }: { label?: string; dir?: "right" | "
       {dir === "right"
         ? <ArrowRight className="size-4 text-muted-foreground" />
         : <ArrowLeft  className="size-4 text-muted-foreground" />}
-    </div>
-  );
-}
-
-function TimingFlowCard({
-  flowTimings,
-  dispatchMs,
-  bucket,
-  prefix,
-}: {
-  flowTimings: FlowTimings;
-  dispatchMs?: number;
-  bucket: string;
-  prefix: string;
-}) {
-  const nodes = [
-    { label: "Browser",    color: "border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300" },
-    { label: "App Server", color: "border-blue-500/50 bg-blue-500/10 text-blue-700 dark:text-blue-300" },
-    { label: "GridWeave",  color: "border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300" },
-    { label: "Worker",     color: "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-    { label: "Garage S3",  color: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300" },
-  ];
-  const connectors = [
-    { timing: flowTimings.http_ms,  label: "HTTP" },
-    { timing: flowTimings.auth_ms,  label: "SDK auth" },
-    { timing: dispatchMs,           label: "dispatch" },
-    { timing: flowTimings.s3_ms,    label: "S3 operation" },
-  ];
-
-  return (
-    <Card className="border-card-border" data-testid="card-timing-flow">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Workflow className="size-4 text-primary" />
-          Layer timing
-          {bucket && (
-            <span className="font-mono text-[11px] font-normal text-muted-foreground">
-              s3://{bucket}/{prefix}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Pipeline row */}
-        <div className="flex items-center overflow-x-auto rounded-xl border border-border bg-muted/10 p-4">
-          {nodes.map((node, i) => (
-            <Fragment key={i}>
-              {/* Node chip */}
-              <div className={`shrink-0 rounded-lg border-2 px-4 py-2 text-center text-xs font-bold whitespace-nowrap ${node.color}`}>
-                {node.label}
-              </div>
-
-              {/* Connector with timing */}
-              {i < connectors.length && (() => {
-                const { timing, label } = connectors[i];
-                return (
-                  <div className="flex min-w-[110px] flex-1 flex-col items-center gap-1.5 px-2">
-                    {/* Timing badge — always visible */}
-                    <span className={`rounded-lg border-2 px-3 py-1 text-sm font-mono font-bold whitespace-nowrap tabular-nums ${
-                      timing != null
-                        ? "border-primary/60 bg-primary/15 text-primary"
-                        : "border-border bg-muted/50 text-muted-foreground"
-                    }`}>
-                      {timing != null ? fmtMs(timing) : "— ms"}
-                    </span>
-                    {/* Arrow line */}
-                    <div className="flex w-full items-center">
-                      <div className="h-0.5 flex-1 bg-border" />
-                      <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-                    </div>
-                    {/* Label */}
-                    <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-                      {label}
-                    </span>
-                  </div>
-                );
-              })()}
-            </Fragment>
-          ))}
-        </div>
-
-        {/* Summary row */}
-        <div className="flex flex-wrap gap-4 text-xs">
-          {[
-            { label: "HTTP round-trip", value: flowTimings.http_ms, color: "text-sky-600 dark:text-sky-400" },
-            { label: "SDK auth",        value: flowTimings.auth_ms, color: "text-violet-600 dark:text-violet-400" },
-            { label: "Worker job",      value: flowTimings.job_ms,  color: "text-emerald-600 dark:text-emerald-400" },
-            { label: "S3 operation",    value: flowTimings.s3_ms,   color: "text-amber-600 dark:text-amber-400" },
-            { label: "Server total",    value: flowTimings.total_ms, color: "text-blue-600 dark:text-blue-400" },
-          ].filter(t => t.value != null).map(({ label, value, color }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <span className="text-muted-foreground">{label}:</span>
-              <span className={`font-mono font-bold tabular-nums ${color}`}>
-                {fmtMs(value!)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Connector segment between two pipeline nodes. Timing sits above the arrow line. */
-function PipelineConnector({
-  label,
-  timing,
-  dir = "right",
-}: {
-  label?: string;
-  timing?: number;
-  dir?: "right" | "left";
-}) {
-  return (
-    <div className="flex flex-1 min-w-[88px] flex-col items-center gap-1.5 px-1">
-      {/* Timing badge — always rendered, never invisible */}
-      <span
-        className={`rounded-md border px-3 py-1 text-xs font-mono font-bold whitespace-nowrap tabular-nums ${
-          timing != null
-            ? "border-primary/60 bg-primary/10 text-primary"
-            : "border-border bg-muted/50 text-muted-foreground"
-        }`}
-      >
-        {timing != null ? fmtMs(timing) : "— ms"}
-      </span>
-      {/* Arrow line */}
-      <div className="flex w-full items-center">
-        {dir === "left" && <ArrowLeft className="size-4 shrink-0 text-muted-foreground" />}
-        <div className="h-px flex-1 bg-border" />
-        {dir === "right" && <ArrowRight className="size-4 shrink-0 text-muted-foreground" />}
-      </div>
-      {/* Connection label */}
-      {label && (
-        <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
-          {label}
-        </span>
-      )}
     </div>
   );
 }
@@ -1547,7 +1364,6 @@ function ActiveFlowPanel({
   vendor,
   vram,
   lastOp,
-  flowTimings,
 }: {
   hasRun: boolean;
   status: Status;
@@ -1556,7 +1372,6 @@ function ActiveFlowPanel({
   vendor: AcceleratorVendor;
   vram: string;
   lastOp: LastOp | null;
-  flowTimings?: FlowTimings | null;
 }) {
   const [open, setOpen] = useState(true);
   if (!hasRun) return null;
@@ -1567,11 +1382,6 @@ function ActiveFlowPanel({
     : "(root)";
   const s3Path = bucket ? `s3://${bucket}/${prefix}` : "(not configured)";
   const isRunning = status === "running";
-
-  const dispatch_ms =
-    flowTimings?.job_ms != null && flowTimings?.s3_ms != null
-      ? Math.max(0, flowTimings.job_ms - flowTimings.s3_ms)
-      : undefined;
 
   return (
     <Card className="border-card-border" data-testid="card-active-flow">
@@ -1606,72 +1416,52 @@ function ActiveFlowPanel({
           {/* ── Request row (left → right) ────────────────────── */}
           <div className="space-y-1">
             <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Request ↓</p>
-            <div className="flex items-center overflow-x-auto rounded-lg border border-border bg-muted/10 p-3">
-              <div className="shrink-0">
-                <FlowNode label="Browser" sublabel="GridWeave Inspector"
-                  color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                  icon={<Monitor className="size-5" />} />
-              </div>
-              <PipelineConnector label="HTTP" timing={flowTimings?.http_ms} />
-              <div className="shrink-0">
-                <FlowNode label="App Server" sublabel="Express / Node"
-                  color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
-                  icon={<Server className="size-5" />} />
-              </div>
-              <PipelineConnector label="GridWeave SDK" timing={flowTimings?.auth_ms} />
-              <div className="shrink-0">
-                <FlowNode label="GridWeave" sublabel={`${vendor} · ${vram}`}
-                  color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
-                  icon={<Sparkles className="size-5" />} />
-              </div>
-              <PipelineConnector label="dispatch" timing={dispatch_ms} />
-              <div className="shrink-0">
-                <FlowNode label="Remote Worker" sublabel={meta.workerDesc}
-                  color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-                  icon={isRunning ? <Loader2 className="size-5 animate-spin" /> : <Cpu className="size-5" />} />
-              </div>
-              <PipelineConnector label={meta.s3Label} timing={flowTimings?.s3_ms} />
-              <div className="shrink-0">
-                <FlowNode label={folderName} sublabel={bucket ? `s3://${bucket}/` : "S3"}
-                  color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-                  icon={<Database className="size-5" />} />
-              </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-3">
+              <FlowNode label="Browser" sublabel="GridWeave Inspector"
+                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                icon={<Monitor className="size-5" />} />
+              <FlowArrow label="HTTP" />
+              <FlowNode label="App Server" sublabel="Express / Node"
+                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                icon={<Server className="size-5" />} />
+              <FlowArrow label="GridWeave SDK" />
+              <FlowNode label="GridWeave" sublabel={`${vendor} · ${vram}`}
+                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                icon={<Sparkles className="size-5" />} />
+              <FlowArrow label="dispatch" />
+              <FlowNode label="Remote Worker" sublabel={meta.workerDesc}
+                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                icon={isRunning ? <Loader2 className="size-5 animate-spin" /> : <Cpu className="size-5" />} />
+              <FlowArrow label={meta.s3Label} />
+              <FlowNode label={folderName} sublabel={bucket ? `s3://${bucket}/` : "S3"}
+                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                icon={<Database className="size-5" />} />
             </div>
           </div>
 
           {/* ── Response row (right → left) ───────────────────── */}
           <div className="space-y-1">
             <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Response ↑</p>
-            <div className="flex items-center overflow-x-auto rounded-lg border border-border bg-muted/10 p-3">
-              <div className="shrink-0">
-                <FlowNode label={meta.title} sublabel="GridWeave Inspector"
-                  color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                  icon={<Monitor className="size-5" />} />
-              </div>
-              <PipelineConnector label="HTTP response" timing={flowTimings?.http_ms} dir="left" />
-              <div className="shrink-0">
-                <FlowNode label="App Server" sublabel="JSON → browser"
-                  color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
-                  icon={<Server className="size-5" />} />
-              </div>
-              <PipelineConnector label="server total" timing={flowTimings?.total_ms} dir="left" />
-              <div className="shrink-0">
-                <FlowNode label="GridWeave" sublabel="job result"
-                  color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
-                  icon={<Sparkles className="size-5" />} />
-              </div>
-              <PipelineConnector label="worker job" timing={flowTimings?.job_ms} dir="left" />
-              <div className="shrink-0">
-                <FlowNode label="Remote Worker" sublabel="serialise result"
-                  color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-                  icon={<Cpu className="size-5" />} />
-              </div>
-              <PipelineConnector label={meta.returnLabel} timing={flowTimings?.s3_ms} dir="left" />
-              <div className="shrink-0">
-                <FlowNode label={folderName} sublabel={bucket ? `s3://${bucket}/` : "S3"}
-                  color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-                  icon={<Database className="size-5" />} />
-              </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-3">
+              <FlowNode label={meta.title} sublabel="GridWeave Inspector"
+                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                icon={<Monitor className="size-5" />} />
+              <FlowArrow label="HTTP response" dir="left" />
+              <FlowNode label="App Server" sublabel="JSON → browser"
+                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                icon={<Server className="size-5" />} />
+              <FlowArrow label="result" dir="left" />
+              <FlowNode label="GridWeave" sublabel="job result"
+                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                icon={<Sparkles className="size-5" />} />
+              <FlowArrow label="worker job" dir="left" />
+              <FlowNode label="Remote Worker" sublabel="serialise result"
+                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                icon={<Cpu className="size-5" />} />
+              <FlowArrow label={meta.returnLabel} dir="left" />
+              <FlowNode label={folderName} sublabel={bucket ? `s3://${bucket}/` : "S3"}
+                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                icon={<Database className="size-5" />} />
             </div>
           </div>
 
@@ -1692,35 +1482,6 @@ function ActiveFlowPanel({
               {status === "error"   && `${meta.title} failed — see error panel above.`}
               {status === "idle"    && lastOp && `Last: ${meta.title} · folder: ${s3Path}`}
             </span>
-          </div>
-
-          {/* Timing summary */}
-          <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Layer timings
-            </p>
-            <div className="flex flex-wrap gap-3">
-              {[
-                { label: "HTTP round-trip", value: flowTimings?.http_ms, color: "text-sky-600 dark:text-sky-400 border-sky-500/40 bg-sky-500/10" },
-                { label: "SDK auth", value: flowTimings?.auth_ms, color: "text-violet-600 dark:text-violet-400 border-violet-500/40 bg-violet-500/10" },
-                { label: "Worker job", value: flowTimings?.job_ms, color: "text-emerald-600 dark:text-emerald-400 border-emerald-500/40 bg-emerald-500/10" },
-                { label: "S3 operation", value: flowTimings?.s3_ms, color: "text-amber-600 dark:text-amber-400 border-amber-500/40 bg-amber-500/10" },
-                { label: "Server total", value: flowTimings?.total_ms, color: "text-blue-600 dark:text-blue-400 border-blue-500/40 bg-blue-500/10" },
-              ].map(({ label, value, color }) => (
-                <div key={label} className="flex flex-col items-center gap-1">
-                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">{label}</span>
-                  {value != null ? (
-                    <span className={`rounded-full border px-3 py-1 text-xs font-mono font-bold tabular-nums ${color}`}>
-                      {fmtMs(value)}
-                    </span>
-                  ) : (
-                    <span className="rounded-full border border-border bg-muted/40 px-3 py-1 text-xs font-mono text-muted-foreground/50 tabular-nums">
-                      — ms
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
           </div>
         </CardContent>
       )}
