@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import {
   AlertCircle,
+  ArrowRight,
   CheckCircle2,
   Cpu,
   Database,
@@ -45,12 +46,14 @@ import {
   Loader2,
   LogOut,
   Moon,
+  Monitor,
   Play,
   Server,
   Sparkles,
   Sun,
   TerminalSquare,
   Upload,
+  Workflow,
 } from "lucide-react";
 import type {
   AcceleratorVendor,
@@ -664,6 +667,9 @@ export default function Inspector() {
           </Card>
         )}
 
+        {/* Workflow diagram */}
+        <WorkflowDiagram />
+
         {/* Folder browser + contents */}
         <FolderBrowser
           selectedPrefix={selectedPrefix}
@@ -1124,6 +1130,159 @@ export default function Inspector() {
         </footer>
       </main>
     </div>
+  );
+}
+
+function FlowNode({
+  label,
+  sublabel,
+  color,
+  icon,
+}: {
+  label: string;
+  sublabel?: string;
+  color: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-4 py-3 text-center ${color}`} style={{ minWidth: "9rem" }}>
+      <span className="text-xl">{icon}</span>
+      <span className="text-[11px] font-semibold leading-tight">{label}</span>
+      {sublabel && <span className="text-[10px] leading-tight opacity-70">{sublabel}</span>}
+    </div>
+  );
+}
+
+function FlowArrow({ label }: { label?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-0.5 shrink-0">
+      {label && <span className="text-[9px] font-medium text-muted-foreground whitespace-nowrap">{label}</span>}
+      <ArrowRight className="size-4 text-muted-foreground" />
+    </div>
+  );
+}
+
+function WorkflowDiagram() {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <Card className="border-card-border" data-testid="card-workflow">
+      <CardHeader className="pb-2">
+        <button
+          className="flex w-full items-center justify-between text-left"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Workflow className="size-4 text-primary" />
+            System workflow
+          </CardTitle>
+          <span className="text-[11px] text-muted-foreground">{open ? "Hide" : "Show"}</span>
+        </button>
+      </CardHeader>
+
+      {open && (
+        <CardContent className="space-y-6 pt-1">
+          {/* ── Path 1: Direct (browse / list) ─────────────────────── */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Browse &amp; list — direct path
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <FlowNode
+                label="Browser"
+                sublabel="React UI"
+                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                icon={<Monitor className="size-5" />}
+              />
+              <FlowArrow label="HTTP" />
+              <FlowNode
+                label="App Server"
+                sublabel="Express / Node"
+                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                icon={<Server className="size-5" />}
+              />
+              <FlowArrow label="boto3" />
+              <FlowNode
+                label="Garage S3"
+                sublabel="Object store"
+                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                icon={<Database className="size-5" />}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground pl-1">
+              Used for: folder browser, sub-folder listing, folder contents, image thumbnails.
+              The app server calls Garage directly with boto3 — no GridWeave involved.
+            </p>
+          </div>
+
+          <div className="border-t border-border" />
+
+          {/* ── Path 2: Worker (upload / create folder / run check) ── */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Upload / Create folder / Run check — worker path
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <FlowNode
+                label="Browser"
+                sublabel="React UI"
+                color="border-sky-500/40 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                icon={<Monitor className="size-5" />}
+              />
+              <FlowArrow label="HTTP + payload" />
+              <FlowNode
+                label="App Server"
+                sublabel="Express / Node"
+                color="border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-300"
+                icon={<Server className="size-5" />}
+              />
+              <FlowArrow label="GridWeave SDK" />
+              <FlowNode
+                label="GridWeave Platform"
+                sublabel="Job scheduler"
+                color="border-violet-500/40 bg-violet-500/5 text-violet-700 dark:text-violet-300"
+                icon={<Sparkles className="size-5" />}
+              />
+              <FlowArrow label="dispatch" />
+              <FlowNode
+                label="Remote Worker"
+                sublabel="GPU node"
+                color="border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                icon={<Cpu className="size-5" />}
+              />
+              <FlowArrow label="s3fs / boto3" />
+              <FlowNode
+                label="Garage S3"
+                sublabel="Object store"
+                color="border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                icon={<Database className="size-5" />}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground pl-1">
+              Used for: worker upload, create folder, run check.
+              The app server <strong>never</strong> writes to Garage directly.
+              File bytes and folder names travel to the remote GPU worker via GridWeave,
+              and only the worker holds S3 credentials at runtime.
+            </p>
+          </div>
+
+          {/* ── Legend ──────────────────────────────────────────────── */}
+          <div className="flex flex-wrap gap-3 border-t border-border pt-3">
+            {[
+              { color: "bg-sky-500/20 border-sky-500/40 text-sky-700 dark:text-sky-300", label: "Client (browser)" },
+              { color: "bg-blue-500/20 border-blue-500/40 text-blue-700 dark:text-blue-300", label: "App server (local)" },
+              { color: "bg-violet-500/20 border-violet-500/40 text-violet-700 dark:text-violet-300", label: "GridWeave platform" },
+              { color: "bg-emerald-500/20 border-emerald-500/40 text-emerald-700 dark:text-emerald-300", label: "Remote GPU worker" },
+              { color: "bg-amber-500/20 border-amber-500/40 text-amber-700 dark:text-amber-300", label: "Garage S3 storage" },
+            ].map(({ color, label }) => (
+              <div key={label} className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium ${color}`}>
+                {label}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      )}
+    </Card>
   );
 }
 
