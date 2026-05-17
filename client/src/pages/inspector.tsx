@@ -332,21 +332,29 @@ export default function Inspector() {
         mode === "demo"
           ? "/api/run-gridweave-check/demo"
           : "/api/run-gridweave-check";
+      const t0 = performance.now();
       const res = await apiRequest("POST", url, {
         vendor: jobVendor,
         vram: jobVram,
         prefix: selectedPrefix,
       });
-      return (await res.json()) as RunCheckResponse;
+      const data = (await res.json()) as RunCheckResponse;
+      const http_ms = Math.round(performance.now() - t0);
+      setFlowTimings((prev) => ({ ...(prev ?? {}), http_ms }));
+      return data;
     },
     onMutate: () => {
       setStatus("running");
       setResponse(null);
+      // Show the timing card immediately with placeholders
+      setFlowTimings({});
+      // Force a fresh fetch of prefix/objects queries
+      queryClient.invalidateQueries({ queryKey: ["/api/garage-prefixes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/garage-objects"] });
     },
     onSuccess: (data) => {
       setResponse(data);
       setStatus(data.ok ? "success" : "error");
-      // Refresh config (in case anything changed).
       queryClient.invalidateQueries({ queryKey: ["/api/gridweave-config"] });
     },
     onError: (err: any) => {
@@ -759,9 +767,9 @@ export default function Inspector() {
         />
 
         {/* Dedicated timing card — separate from Active Operations */}
-        {hasRun && flowTimings && (
+        {hasRun && (
           <TimingFlowCard
-            flowTimings={flowTimings}
+            flowTimings={flowTimings ?? {}}
             dispatchMs={flowDispatchMs}
             bucket={config.data?.bucket ?? ""}
             prefix={selectedPrefix}
