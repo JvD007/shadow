@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useTheme } from "@/lib/theme";
@@ -6,6 +7,21 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,
@@ -20,18 +36,33 @@ import {
   CheckCircle2,
   Cpu,
   Database,
+  FileUp,
+  FolderPlus,
   HardDrive,
   Image as ImageIcon,
   Loader2,
+  LogOut,
   Moon,
   Play,
+  Server,
   Sparkles,
   Sun,
   TerminalSquare,
+  Upload,
 } from "lucide-react";
-import type { RunCheckResponse } from "@shared/schema";
+import type {
+  AcceleratorVendor,
+  GarageImageError,
+  GarageImageResponse,
+  GaragePrefixListResponse,
+  GarageWriteResponse,
+  ImagePreview,
+  RunCheckResponse,
+} from "@shared/schema";
 
 type Status = "idle" | "running" | "success" | "error";
+const ACCELERATOR_VENDORS: AcceleratorVendor[] = ["NVIDIA", "AMD", "Axelera", "Lumai"];
+const ROOT_PREFIX_VALUE = "__root__";
 
 interface ConfigInfo {
   hasToken: boolean;
@@ -64,6 +95,24 @@ function formatElapsed(ms: number): string {
   if (s < 60) return `${s.toFixed(2)} s`;
   const m = Math.floor(s / 60);
   return `${m}m ${(s - m * 60).toFixed(1)}s`;
+}
+
+function fileToBase64Payload(file: File): Promise<{ name: string; mime: string; size: number; base64: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`));
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      const comma = value.indexOf(",");
+      resolve({
+        name: file.name,
+        mime: file.type || "application/octet-stream",
+        size: file.size,
+        base64: comma >= 0 ? value.slice(comma + 1) : value,
+      });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function StatusPill({ status }: { status: Status }) {
@@ -136,10 +185,18 @@ function SummaryCard({
 
 /** Parse a few well-known fields out of the python output_text for summary cards. */
 function parseOutputText(text: string) {
-  const out: { gpus: string[]; cuda: string; pandas: string } = {
+  const out: {
+    gpus: string[];
+    pandas: string;
+    serverModel: string;
+    cpuCores: string;
+    memoryGb: string;
+  } = {
     gpus: [],
-    cuda: "",
     pandas: "",
+    serverModel: "",
+    cpuCores: "",
+    memoryGb: "",
   };
   if (!text) return out;
   const lines = text.split(/\r?\n/);
@@ -154,18 +211,38 @@ function parseOutputText(text: string) {
         else break;
       }
     }
-    const cuda = line.match(/^CUDA_VISIBLE_DEVICES=(.*)$/);
-    if (cuda) out.cuda = cuda[1];
     const pandas = line.match(/^pandas version:\s*(.*)$/);
     if (pandas) out.pandas = pandas[1];
+    const serverModel = line.match(/^Server model:\s*(.*)$/);
+    if (serverModel) out.serverModel = serverModel[1];
+    const cpuCores = line.match(/^CPU cores:\s*(.*)$/);
+    if (cpuCores) out.cpuCores = cpuCores[1];
+    const memoryGb = line.match(/^Total memory GB:\s*(.*)$/);
+    if (memoryGb) out.memoryGb = memoryGb[1];
   }
   return out;
 }
 
 export default function Inspector() {
   const { theme, toggle } = useTheme();
+  const [, navigate] = useLocation();
+
+  async function handleLogout() {
+    await fetch("/api/logout", { method: "POST" });
+    queryClient.clear();
+    navigate("/login");
+  }
   const [status, setStatus] = useState<Status>("idle");
   const [response, setResponse] = useState<RunCheckResponse | null>(null);
+  const [jobVendor, setJobVendor] = useState<AcceleratorVendor>("NVIDIA");
+  const [jobVram, setJobVram] = useState("2GB");
+  const [selectedPrefix, setSelectedPrefix] = useState("");
+  const [prefixTouched, setPrefixTouched] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<ImagePreview | null>(null);
+  const [selectedThumb, setSelectedThumb] = useState<{ base64: string; mime: string } | null>(null);
+  const [folderName, setFolderName] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [writeResponse, setWriteResponse] = useState<GarageWriteResponse | null>(null);
 
   const config = useQuery<ConfigInfo>({
     queryKey: ["/api/gridweave-config"],
@@ -177,13 +254,52 @@ export default function Inspector() {
     return c.hasToken && c.hasAccessKey && c.hasSecretKey && Boolean(c.endpoint) && Boolean(c.bucket);
   }, [config.data]);
 
+  const prefixDiscoveryReady = useMemo(() => {
+    const c = config.data;
+    if (!c) return false;
+    return c.hasToken && c.hasAccessKey && c.hasSecretKey && Boolean(c.endpoint) && Boolean(c.bucket);
+  }, [config.data]);
+
+  const prefixQuery = useQuery<GaragePrefixListResponse>({
+    queryKey: ["/api/garage-prefixes", jobVendor, jobVram],
+    enabled: prefixDiscoveryReady,
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-prefixes", {
+        vendor: jobVendor,
+        vram: jobVram,
+        prefix: selectedPrefix,
+      });
+      return (await res.json()) as GaragePrefixListResponse;
+    },
+  });
+
+  useEffect(() => {
+    if (!prefixTouched && config.data?.prefix && selectedPrefix === "") {
+      setSelectedPrefix(config.data.prefix);
+    }
+  }, [config.data?.prefix, prefixTouched, selectedPrefix]);
+
+  const prefixOptions = useMemo(() => {
+    const values = new Set<string>();
+    values.add("");
+    if (config.data?.prefix) values.add(config.data.prefix);
+    for (const prefix of prefixQuery.data?.prefixes || []) {
+      values.add(prefix);
+    }
+    return Array.from(values);
+  }, [config.data?.prefix, prefixQuery.data?.prefixes]);
+
   const run = useMutation({
     mutationFn: async (mode: "real" | "demo") => {
       const url =
         mode === "demo"
           ? "/api/run-gridweave-check/demo"
           : "/api/run-gridweave-check";
-      const res = await apiRequest("POST", url, {});
+      const res = await apiRequest("POST", url, {
+        vendor: jobVendor,
+        vram: jobVram,
+        prefix: selectedPrefix,
+      });
       return (await res.json()) as RunCheckResponse;
     },
     onMutate: () => {
@@ -208,6 +324,76 @@ export default function Inspector() {
     },
   });
 
+  const createFolder = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-create-folder", {
+        vendor: jobVendor,
+        vram: jobVram,
+        prefix: selectedPrefix,
+        folder_name: folderName,
+      });
+      return (await res.json()) as GarageWriteResponse;
+    },
+    onMutate: () => {
+      setWriteResponse(null);
+    },
+    onSuccess: (data) => {
+      setWriteResponse(data);
+      if (data.ok) {
+        setFolderName("");
+        queryClient.invalidateQueries({ queryKey: ["/api/garage-prefixes", jobVendor, jobVram] });
+      }
+    },
+    onError: (err: any) => {
+      setWriteResponse({
+        ok: false,
+        action: "create_folder",
+        error: { code: "client_error", message: err?.message || String(err) },
+      });
+    },
+  });
+
+  const uploadFiles = useMutation({
+    mutationFn: async () => {
+      const files = await Promise.all(selectedFiles.map(fileToBase64Payload));
+      const res = await apiRequest("POST", "/api/garage-upload", {
+        vendor: jobVendor,
+        vram: jobVram,
+        prefix: selectedPrefix,
+        files,
+      });
+      return (await res.json()) as GarageWriteResponse;
+    },
+    onMutate: () => {
+      setWriteResponse(null);
+    },
+    onSuccess: (data) => {
+      setWriteResponse(data);
+      if (data.ok) {
+        setSelectedFiles([]);
+        queryClient.invalidateQueries({ queryKey: ["/api/garage-prefixes", jobVendor, jobVram] });
+      }
+    },
+    onError: (err: any) => {
+      setWriteResponse({
+        ok: false,
+        action: "upload_files",
+        error: { code: "client_error", message: err?.message || String(err) },
+      });
+    },
+  });
+
+  const fullImageQuery = useQuery<GarageImageResponse | GarageImageError>({
+    queryKey: ["/api/garage-image", selectedImage?.key],
+    enabled: Boolean(selectedImage),
+    queryFn: async () => {
+      const res = await fetch(`/api/garage-image?key=${encodeURIComponent(selectedImage!.key)}`);
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
   const ok = response && response.ok ? response : null;
   const errResp = response && !response.ok ? response : null;
   const result = ok?.result ?? null;
@@ -216,8 +402,40 @@ export default function Inspector() {
     [result?.output_text]
   );
 
+  const imageKeys = useMemo(
+    () => result?.image_previews?.filter((img) => !img.base64).map((img) => img.key) ?? [],
+    [result]
+  );
+
+  const batchThumbQuery = useQuery<{ ok: boolean; results?: Array<{ ok: boolean; key: string; base64?: string; mime?: string }> }>({
+    queryKey: ["/api/garage-images", imageKeys],
+    enabled: imageKeys.length > 0,
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-images", { keys: imageKeys, width: 240 });
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  const thumbMap = useMemo(() => {
+    const map: Record<string, { base64: string; mime: string }> = {};
+    if (batchThumbQuery.data?.ok && Array.isArray(batchThumbQuery.data.results)) {
+      for (const item of batchThumbQuery.data.results) {
+        if (item.ok && item.key && item.base64) {
+          map[item.key] = { base64: item.base64, mime: item.mime! };
+        }
+      }
+    }
+    return map;
+  }, [batchThumbQuery.data]);
+  const selectedFilesSize = useMemo(
+    () => selectedFiles.reduce((sum, file) => sum + file.size, 0),
+    [selectedFiles]
+  );
+  const writePending = createFolder.isPending || uploadFiles.isPending;
   const friendly: Record<Status, string> = {
-    idle: "Ready. Press Run check to authenticate, list objects, and fetch image previews.",
+    idle: "Ready. Upload files, create folders, or run a worker-side listing check.",
     running: "Authenticating with GridWeave, listing Garage objects, and fetching image previews…",
     success: ok?.demo
       ? "Demo run finished. The values below are synthetic — wire up real credentials to run against your cluster."
@@ -252,6 +470,15 @@ export default function Inspector() {
             >
               {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Sign out"
+              onClick={handleLogout}
+              data-testid="button-logout"
+            >
+              <LogOut className="size-4" />
+            </Button>
           </div>
         </div>
       </header>
@@ -263,18 +490,85 @@ export default function Inspector() {
             <div>
               <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
                 <Sparkles className="size-3 text-primary" />
-                Cluster readiness check
+                Worker-only S3 writes
               </div>
               <h1 className="text-xl font-semibold tracking-tight md:text-xl">
-                Verify GPUs, storage, and image data in one run.
+                Upload files and create Garage folders through GridWeave workers.
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-muted-foreground" data-testid="text-friendly-status">
                 {friendly[status]}
               </p>
+              <Card className="mt-5 max-w-2xl border-card-border bg-card/70">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Remote worker request</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+                  <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                    Accelerator vendor
+                    <Select
+                      value={jobVendor}
+                      onValueChange={(value) => setJobVendor(value as AcceleratorVendor)}
+                    >
+                      <SelectTrigger data-testid="select-vendor" className="bg-background">
+                        <SelectValue placeholder="Select vendor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ACCELERATOR_VENDORS.map((vendor) => (
+                          <SelectItem key={vendor} value={vendor}>
+                            {vendor}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                    VRAM request
+                    <Input
+                      value={jobVram}
+                      onChange={(event) => setJobVram(event.target.value)}
+                      placeholder="40GB"
+                      data-testid="input-vram"
+                      className="bg-background font-mono"
+                    />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-medium text-muted-foreground sm:col-span-2">
+                    GARAGE_PREFIX
+                    <Select
+                      value={selectedPrefix || ROOT_PREFIX_VALUE}
+                      onValueChange={(value) => {
+                        setPrefixTouched(true);
+                        setSelectedPrefix(value === ROOT_PREFIX_VALUE ? "" : value);
+                      }}
+                      disabled={!prefixDiscoveryReady || prefixQuery.isLoading}
+                    >
+                      <SelectTrigger data-testid="select-garage-prefix" className="bg-background font-mono">
+                        <SelectValue placeholder={prefixQuery.isLoading ? "Loading folders…" : "Select folder prefix"} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[260px] overflow-y-auto">
+                        {prefixOptions.map((prefix) => (
+                          <SelectItem key={prefix || ROOT_PREFIX_VALUE} value={prefix || ROOT_PREFIX_VALUE}>
+                            {prefix || "(root / no prefix)"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {prefixQuery.data?.ok === false && (
+                      <span className="block text-[11px] font-normal text-destructive" data-testid="text-prefix-error">
+                        {prefixQuery.data.error?.message || "Could not load prefixes."}
+                      </span>
+                    )}
+                    {prefixDiscoveryReady && prefixQuery.data?.ok && (
+                      <span className="block text-[11px] font-normal text-muted-foreground" data-testid="text-prefix-count">
+                        {prefixOptions.length} folder option{prefixOptions.length === 1 ? "" : "s"} loaded by the selected worker profile. The menu scrolls after the first 10.
+                      </span>
+                    )}
+                  </label>
+                </CardContent>
+              </Card>
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <Button
                   size="lg"
-                  onClick={() => run.mutate(cfgReady ? "real" : "demo")}
+                  onClick={() => run.mutate("real")}
                   disabled={run.isPending}
                   data-testid="button-run-check"
                   className="gap-2"
@@ -284,7 +578,7 @@ export default function Inspector() {
                   ) : (
                     <Play className="size-4" />
                   )}
-                  {run.isPending ? "Running…" : cfgReady ? "Run check" : "Run demo"}
+                  {run.isPending ? "Running…" : "Run check"}
                 </Button>
                 <Button
                   size="lg"
@@ -329,12 +623,13 @@ export default function Inspector() {
                 <ConfigRow label="GARAGE_SECRET_KEY" present={config.data?.hasSecretKey} />
                 <ConfigRow label="GARAGE_ENDPOINT_URL" value={config.data?.endpoint} />
                 <ConfigRow label="GARAGE_BUCKET" value={config.data?.bucket} />
-                <ConfigRow label="GARAGE_PREFIX" value={config.data?.prefix} />
+                <ConfigRow label="GARAGE_PREFIX" value={selectedPrefix} />
                 <ConfigRow label="GARAGE_REGION" value={config.data?.region} />
                 <ConfigRow label="GRIDWEAVE_PLATFORM_URL" value={config.data?.platformUrl} />
                 {config.data && !cfgReady && (
                   <p className="mt-2 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
-                    Some required values are not set. The Run button will fall back to demo mode so you can preview the UI.
+                    Some required values are not set. Run check will attempt the real remote job and report any missing configuration.
+                    Use Run demo only when you want synthetic preview data.
                     See <span className="font-mono">.env.example</span>.
                   </p>
                 )}
@@ -365,6 +660,153 @@ export default function Inspector() {
           </Card>
         )}
 
+        <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <Card data-testid="card-worker-upload" className="border-card-border">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Upload className="size-4 text-primary" />
+                Worker upload
+              </CardTitle>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Files are read by the browser and sent to the local API as a job payload. The Garage/S3 write happens only inside the selected GridWeave worker.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Destination:{" "}
+                <span className="font-mono text-foreground">
+                  s3://{config.data?.bucket || "GARAGE_BUCKET"}/{selectedPrefix || ""}
+                </span>
+              </div>
+              <label className="block space-y-2 text-xs font-medium text-muted-foreground">
+                Select files
+                <Input
+                  key={selectedFiles.length === 0 ? "upload-empty" : "upload-selected"}
+                  type="file"
+                  multiple
+                  onChange={(event) => setSelectedFiles(Array.from(event.target.files || []))}
+                  data-testid="input-upload-files"
+                  className="bg-background"
+                />
+              </label>
+              {selectedFiles.length > 0 ? (
+                <div className="rounded-md border border-border">
+                  <div className="flex items-center justify-between border-b border-border px-3 py-2 text-xs">
+                    <span className="font-medium text-foreground">
+                      {selectedFiles.length} file{selectedFiles.length === 1 ? "" : "s"} selected
+                    </span>
+                    <span className="font-mono text-muted-foreground">{formatBytes(selectedFilesSize)}</span>
+                  </div>
+                  <ScrollArea className="max-h-36">
+                    <div className="divide-y divide-border">
+                      {selectedFiles.map((file, index) => (
+                        <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                          <span className="truncate font-mono" title={file.name} data-testid={`text-selected-file-${index}`}>
+                            {file.name}
+                          </span>
+                          <span className="shrink-0 font-mono text-muted-foreground">{formatBytes(file.size)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              ) : (
+                <div className="flex h-24 items-center justify-center rounded-md border border-dashed border-border text-center text-xs text-muted-foreground">
+                  Choose one or more files to upload with the worker.
+                </div>
+              )}
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={() => uploadFiles.mutate()}
+                  disabled={writePending || selectedFiles.length === 0}
+                  data-testid="button-upload-files"
+                  className="gap-2"
+                >
+                  {uploadFiles.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileUp className="size-4" />}
+                  {uploadFiles.isPending ? "Uploading…" : "Upload via worker"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedFiles([])}
+                  disabled={writePending || selectedFiles.length === 0}
+                  data-testid="button-clear-files"
+                >
+                  Clear
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-worker-folder" className="border-card-border">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <FolderPlus className="size-4 text-primary" />
+                Create folder
+              </CardTitle>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Creates a zero-byte object ending in <span className="font-mono">/</span> from the remote worker, using the selected destination prefix.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <label className="block space-y-2 text-xs font-medium text-muted-foreground">
+                New folder name
+                <Input
+                  value={folderName}
+                  onChange={(event) => setFolderName(event.target.value)}
+                  placeholder="new-folder"
+                  data-testid="input-folder-name"
+                  className="bg-background font-mono"
+                />
+              </label>
+              <Button
+                onClick={() => createFolder.mutate()}
+                disabled={writePending || !folderName.trim()}
+                data-testid="button-create-folder"
+                className="w-full gap-2"
+              >
+                {createFolder.isPending ? <Loader2 className="size-4 animate-spin" /> : <FolderPlus className="size-4" />}
+                {createFolder.isPending ? "Creating…" : "Create folder via worker"}
+              </Button>
+              {writeResponse && (
+                <div
+                  className={`rounded-md border px-3 py-3 text-xs ${
+                    writeResponse.ok
+                      ? "border-emerald-500/30 bg-emerald-500/5"
+                      : "border-destructive/30 bg-destructive/5"
+                  }`}
+                  data-testid="card-write-result"
+                >
+                  {writeResponse.ok ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 font-medium text-emerald-700 dark:text-emerald-300">
+                        <CheckCircle2 className="size-4" />
+                        {writeResponse.message}
+                      </div>
+                      <div className="space-y-1">
+                        {writeResponse.objects.map((object, index) => (
+                          <div key={`${object.key}-${index}`} className="break-all font-mono text-muted-foreground" data-testid={`text-written-object-${index}`}>
+                            {object.key} · {formatBytes(object.size)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 font-medium text-destructive">
+                        <AlertCircle className="size-4" />
+                        {writeResponse.error.code}
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px]" data-testid="text-write-error">
+                        {writeResponse.error.message}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
         {/* Summary cards */}
         <section
           className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
@@ -389,11 +831,29 @@ export default function Inspector() {
             }
           />
           <SummaryCard
-            icon={<Cpu className="size-4" />}
-            label="CUDA_VISIBLE_DEVICES"
-            mono
-            testid="text-cuda"
-            value={parsed.cuda || <span className="text-muted-foreground">—</span>}
+            icon={<Server className="size-4" />}
+            label="Server"
+            testid="text-server-info"
+            value={
+              result?.server_info ? (
+                <div className="space-y-1">
+                  <div className="font-mono text-xs">{result.server_info.model}</div>
+                  <div className="text-sm text-muted-foreground">
+                    <span className="tabular-nums">{result.server_info.cpu_cores}</span> cores ·{" "}
+                    <span className="tabular-nums">{result.server_info.memory_gb}</span> GB RAM
+                  </div>
+                </div>
+              ) : parsed.serverModel || parsed.cpuCores || parsed.memoryGb ? (
+                <div className="space-y-1">
+                  <div className="font-mono text-xs">{parsed.serverModel || "Unknown server"}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {parsed.cpuCores || "—"} cores · {parsed.memoryGb || "—"} GB RAM
+                  </div>
+                </div>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )
+            }
           />
           <SummaryCard
             icon={<HardDrive className="size-4" />}
@@ -412,7 +872,7 @@ export default function Inspector() {
                 <>
                   {config.data.bucket}
                   <span className="text-muted-foreground"> / </span>
-                  {config.data.prefix || <span className="text-muted-foreground">(root)</span>}
+                  {selectedPrefix || <span className="text-muted-foreground">(root)</span>}
                 </>
               ) : (
                 <span className="text-muted-foreground">—</span>
@@ -491,32 +951,23 @@ export default function Inspector() {
             </CardHeader>
             <CardContent>
               {result && result.image_previews.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {result.image_previews.map((img, i) => (
-                    <figure
-                      key={i}
-                      className="group overflow-hidden rounded-md border border-border bg-muted"
-                      data-testid={`figure-image-${i}`}
-                    >
-                      <div className="aspect-square w-full overflow-hidden">
-                        <img
-                          src={`data:${img.mime};base64,${img.base64}`}
-                          alt={img.key}
-                          loading="lazy"
-                          className="h-full w-full object-cover"
-                          data-testid={`img-preview-${i}`}
-                        />
-                      </div>
-                      <figcaption
-                        className="truncate px-2 py-1.5 font-mono text-[10px] text-muted-foreground"
-                        title={img.key}
-                        data-testid={`text-image-key-${i}`}
-                      >
-                        {img.key.split("/").pop()}
-                      </figcaption>
-                    </figure>
-                  ))}
-                </div>
+                <ScrollArea className="h-[34rem] pr-3" data-testid="scroll-image-gallery">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {result.image_previews.map((img, i) => (
+                      <ImageCard
+                        key={img.key}
+                        img={img}
+                        index={i}
+                        thumbData={img.base64 ? { base64: img.base64, mime: img.mime } : thumbMap[img.key]}
+                        batchLoading={batchThumbQuery.isPending && imageKeys.length > 0}
+                        onSelect={(thumb) => {
+                          setSelectedImage(img);
+                          setSelectedThumb(thumb ?? null);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </ScrollArea>
               ) : (
                 <div className="flex h-[22rem] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border text-center">
                   <ImageIcon className="size-8 text-muted-foreground/50" />
@@ -528,6 +979,67 @@ export default function Inspector() {
               )}
             </CardContent>
           </Card>
+
+          <Dialog
+            open={Boolean(selectedImage)}
+            onOpenChange={(open) => { if (!open) { setSelectedImage(null); setSelectedThumb(null); } }}
+          >
+            <DialogContent className="max-w-5xl p-0" data-testid="dialog-image-preview">
+              <DialogHeader className="px-5 pt-5">
+                <DialogTitle className="text-sm">Image preview</DialogTitle>
+                <DialogDescription className="break-all font-mono text-xs" data-testid="text-selected-image-key">
+                  {selectedImage?.key}
+                </DialogDescription>
+              </DialogHeader>
+              {selectedImage && (() => {
+                const fullOk = fullImageQuery.data?.ok ? fullImageQuery.data as GarageImageResponse : null;
+                const thumbSrc = selectedThumb
+                  ? `data:${selectedThumb.mime};base64,${selectedThumb.base64}`
+                  : selectedImage.base64
+                  ? `data:${selectedImage.mime};base64,${selectedImage.base64}`
+                  : null;
+                return (
+                  <div className="px-5 pb-5">
+                    <div className="relative flex min-h-[180px] max-h-[75vh] items-center justify-center overflow-auto rounded-md border border-border bg-muted/40 p-2">
+                      {fullOk ? (
+                        <img
+                          src={`data:${fullOk.mime};base64,${fullOk.base64}`}
+                          alt={selectedImage.key}
+                          className="max-h-[72vh] max-w-full object-contain"
+                          data-testid="img-selected-preview"
+                        />
+                      ) : thumbSrc ? (
+                        <>
+                          <img
+                            src={thumbSrc}
+                            alt={selectedImage.key}
+                            className="max-h-[72vh] max-w-full object-contain blur-sm"
+                            data-testid="img-selected-preview"
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="flex items-center gap-2 rounded-lg bg-background/85 px-3 py-2 text-xs text-muted-foreground shadow">
+                              <Loader2 className="size-4 animate-spin text-primary" />
+                              Loading full image…
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <Loader2 className="size-8 animate-spin text-primary" />
+                          <span className="text-xs">Loading image…</span>
+                        </div>
+                      )}
+                      {!fullImageQuery.isPending && fullImageQuery.data && !fullImageQuery.data.ok && (
+                        <div className="absolute bottom-2 left-2 right-2 rounded bg-destructive/80 px-2 py-1 text-center text-xs text-white">
+                          Full image unavailable — showing thumbnail
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </DialogContent>
+          </Dialog>
         </section>
 
         {/* Object sample table */}
@@ -581,12 +1093,137 @@ export default function Inspector() {
           </Card>
         </section>
 
-        <footer className="pt-4 text-[11px] text-muted-foreground">
-          Wraps a notebook-style GridWeave + Garage S3 + GPU readiness check. Configuration is read
-          from environment variables — no secrets are stored in the browser.
+        <footer className="space-y-4 pt-4">
+          <p className="text-[11px] text-muted-foreground">
+            Wraps a notebook-style GridWeave + Garage S3 + GPU readiness check. Configuration is read
+            from environment variables — no secrets are stored in the browser.
+          </p>
+          <VersionsPanel />
         </footer>
       </main>
     </div>
+  );
+}
+
+const VERSION_GROUPS: Array<{ label: string; keys: string[] }> = [
+  { label: "Runtime", keys: ["node", "python"] },
+  { label: "Frontend", keys: ["react", "vite", "typescript", "tailwindcss", "@tanstack/react-query", "wouter"] },
+  { label: "Backend", keys: ["express", "@aws-sdk/client-s3", "drizzle-orm", "better-sqlite3", "zod"] },
+];
+
+const VERSION_LABELS: Record<string, string> = {
+  node: "Node.js",
+  python: "Python",
+  react: "React",
+  vite: "Vite",
+  typescript: "TypeScript",
+  tailwindcss: "Tailwind CSS",
+  "@tanstack/react-query": "TanStack Query",
+  wouter: "Wouter",
+  express: "Express",
+  "@aws-sdk/client-s3": "AWS SDK S3",
+  "drizzle-orm": "Drizzle ORM",
+  "better-sqlite3": "SQLite",
+  zod: "Zod",
+};
+
+function VersionsPanel() {
+  const { data, isLoading } = useQuery<Record<string, string>>({
+    queryKey: ["/api/versions"],
+    staleTime: Infinity,
+  });
+
+  return (
+    <Card className="border-card-border" data-testid="card-versions">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Software versions
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            Loading…
+          </div>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-3">
+            {VERSION_GROUPS.map((group) => (
+              <div key={group.label}>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">
+                  {group.label}
+                </p>
+                <div className="space-y-1.5">
+                  {group.keys.map((key) => (
+                    <div key={key} className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-muted-foreground">
+                        {VERSION_LABELS[key] ?? key}
+                      </span>
+                      <span className="font-mono text-[11px] text-foreground">
+                        {data?.[key] ?? "—"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ImageCard({
+  img,
+  index,
+  thumbData,
+  batchLoading,
+  onSelect,
+}: {
+  img: ImagePreview;
+  index: number;
+  thumbData?: { base64: string; mime: string };
+  batchLoading: boolean;
+  onSelect: (thumb: { base64: string; mime: string } | undefined) => void;
+}) {
+  const thumbSrc = thumbData ? `data:${thumbData.mime};base64,${thumbData.base64}` : null;
+  const isLoading = batchLoading && !thumbData;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(thumbData)}
+      className="group overflow-hidden rounded-md border border-border bg-muted text-left transition hover:border-primary/60 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+      data-testid={`button-image-${index}`}
+      aria-label={`Open larger preview for ${img.key}`}
+    >
+      <div className="aspect-square w-full overflow-hidden bg-muted">
+        {thumbSrc ? (
+          <img
+            src={thumbSrc}
+            alt={img.key}
+            className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
+            data-testid={`img-preview-${index}`}
+          />
+        ) : isLoading ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="size-5 animate-spin text-muted-foreground/40" />
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <ImageIcon className="size-8 text-muted-foreground/20" />
+          </div>
+        )}
+      </div>
+      <span
+        className="block truncate px-2 py-1.5 font-mono text-[10px] text-muted-foreground"
+        title={img.key}
+        data-testid={`text-image-key-${index}`}
+      >
+        {img.key.split("/").pop()}
+      </span>
+    </button>
   );
 }
 
