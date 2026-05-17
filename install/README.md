@@ -1,6 +1,6 @@
-# GridWeave Inspector — Ubuntu 24.04 Install Kit
+# Dell Technologies - Distributed Architecture | S3 Client — Ubuntu 24.04 Install Kit
 
-Fully automated install/uninstall for running GridWeave Inspector as a
+Fully automated install/uninstall for running Dell Technologies - Distributed Architecture | S3 Client as a
 `systemd` service on Ubuntu 24.04.
 
 ---
@@ -104,7 +104,7 @@ The server listens on port **5000** by default.  Change `PORT=` in
 To expose via UFW:
 
 ```bash
-sudo ufw allow 5000/tcp comment "GridWeave Inspector"
+sudo ufw allow 5000/tcp comment "Dell Technologies - Distributed Architecture | S3 Client"
 ```
 
 Or put Nginx in front as a reverse proxy (recommended for HTTPS):

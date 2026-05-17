@@ -1,6 +1,6 @@
-# GridWeave Inspector
+# Dell Technologies - Distributed Architecture | S3 Client
 
-A small full-stack web app that wraps **GridWeave + Garage S3 worker operations** in a friendly dashboard. The app can upload files, create folder marker objects, list prefixes, and run the original GPU/storage/image readiness check.
+A full-stack web app for browsing, uploading, and managing objects in **Garage S3** through GridWeave workers. The app can upload files, create folder marker objects, list prefixes, and run a GPU/storage/image readiness check.
 
 - **Frontend:** React + TypeScript + Tailwind + shadcn/ui
 - **Backend:** Express (TypeScript) — API endpoints that spawn Python helpers
@@ -68,7 +68,7 @@ bash start.sh --build  # force rebuild then start production
 
 ## Linux service (Ubuntu 24.04)
 
-Run GridWeave Inspector as a `systemd` service that starts automatically on boot.
+Run the Dell Technologies S3 Client as a `systemd` service that starts automatically on boot.
 
 ### Prerequisites
 
