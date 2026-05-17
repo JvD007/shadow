@@ -1567,14 +1567,16 @@ function FolderBrowser({
 }
 
 const VERSION_GROUPS: Array<{ label: string; keys: string[] }> = [
-  { label: "Runtime", keys: ["node", "python"] },
+  { label: "Runtime", keys: ["node", "python", "gridweave-sdk"] },
   { label: "Frontend", keys: ["react", "vite", "typescript", "tailwindcss", "@tanstack/react-query", "wouter"] },
   { label: "Backend", keys: ["express", "@aws-sdk/client-s3", "drizzle-orm", "better-sqlite3", "zod"] },
+  { label: "Worker Software", keys: ["boto3", "s3fs", "pandas", "Pillow", "ray", "cloudpickle", "httpx"] },
 ];
 
 const VERSION_LABELS: Record<string, string> = {
   node: "Node.js",
   python: "Python",
+  "gridweave-sdk": "GridWeave SDK",
   react: "React",
   vite: "Vite",
   typescript: "TypeScript",
@@ -1586,6 +1588,13 @@ const VERSION_LABELS: Record<string, string> = {
   "drizzle-orm": "Drizzle ORM",
   "better-sqlite3": "SQLite",
   zod: "Zod",
+  boto3: "boto3",
+  s3fs: "s3fs",
+  pandas: "pandas",
+  Pillow: "Pillow (PIL)",
+  ray: "Ray",
+  cloudpickle: "cloudpickle",
+  httpx: "httpx",
 };
 
 function VersionsPanel() {
@@ -1608,7 +1617,7 @@ function VersionsPanel() {
             Loading…
           </div>
         ) : (
-          <div className="grid gap-6 sm:grid-cols-3">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
             {VERSION_GROUPS.map((group) => (
               <div key={group.label}>
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">

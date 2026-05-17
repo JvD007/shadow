@@ -420,8 +420,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
 
+    const py = process.env.PYTHON_BIN || "python3";
+
     try {
-      const py = process.env.PYTHON_BIN || "python3";
       const child = spawn(py, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
       const chunks: Buffer[] = [];
       const errChunks: Buffer[] = [];
@@ -435,6 +436,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       versions.python = match ? match[1] : "unknown";
     } catch {
       versions.python = "unknown";
+    }
+
+    // Fetch Python package versions (GridWeave SDK + worker deps)
+    const pyPkgs = ["gridweave-sdk", "boto3", "s3fs", "pandas", "Pillow", "ray", "cloudpickle", "httpx"];
+    try {
+      const script = [
+        "import importlib.metadata, json, sys",
+        `pkgs = ${JSON.stringify(pyPkgs)}`,
+        "out = {}",
+        "for p in pkgs:",
+        "    try: out[p] = importlib.metadata.version(p)",
+        "    except Exception: out[p] = None",
+        "sys.stdout.write(json.dumps(out))",
+      ].join("\n");
+      const child = spawn(py, ["-c", script], { stdio: ["ignore", "pipe", "pipe"] });
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve) => {
+        child.stdout.on("data", (b: Buffer) => chunks.push(b));
+        child.on("close", () => resolve());
+        child.on("error", () => resolve());
+      });
+      const raw = Buffer.concat(chunks).toString().trim();
+      if (raw) {
+        const pyVersions = JSON.parse(raw) as Record<string, string | null>;
+        for (const [k, v] of Object.entries(pyVersions)) {
+          versions[k] = v ?? "unknown";
+        }
+      }
+    } catch {
+      // Python package versions unavailable — leave them out
     }
 
     res.json(versions);
