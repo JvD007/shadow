@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -37,6 +37,8 @@ import {
   Cpu,
   Database,
   FileUp,
+  Folder,
+  FolderOpen,
   FolderPlus,
   HardDrive,
   Image as ImageIcon,
@@ -807,6 +809,16 @@ export default function Inspector() {
           </Card>
         </section>
 
+        {/* Folder browser */}
+        <FolderBrowser
+          selectedPrefix={selectedPrefix}
+          onSelect={(prefix) => {
+            setPrefixTouched(true);
+            setSelectedPrefix(prefix);
+          }}
+          enabled={prefixDiscoveryReady}
+        />
+
         {/* Summary cards */}
         <section
           className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
@@ -1102,6 +1114,125 @@ export default function Inspector() {
         </footer>
       </main>
     </div>
+  );
+}
+
+function FolderBrowser({
+  selectedPrefix,
+  onSelect,
+  enabled,
+}: {
+  selectedPrefix: string;
+  onSelect: (prefix: string) => void;
+  enabled: boolean;
+}) {
+  const subQuery = useQuery<GaragePrefixListResponse>({
+    queryKey: ["/api/garage-prefixes/browse", selectedPrefix],
+    enabled,
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/garage-prefixes", {
+        vendor: "NVIDIA",
+        vram: "2GB",
+        prefix: selectedPrefix,
+      });
+      return res.json();
+    },
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+
+  const subFolders = useMemo(() => {
+    if (!subQuery.data?.ok) return [];
+    return (subQuery.data.prefixes ?? []).filter((p) => p !== "" && p !== selectedPrefix);
+  }, [subQuery.data, selectedPrefix]);
+
+  const crumbs = useMemo(
+    () => selectedPrefix.split("/").filter(Boolean),
+    [selectedPrefix]
+  );
+
+  function crumbPrefix(index: number) {
+    return crumbs.slice(0, index + 1).join("/") + "/";
+  }
+
+  if (!enabled) return null;
+
+  return (
+    <Card className="border-card-border" data-testid="card-folder-browser">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <FolderOpen className="size-4 text-primary" />
+          Folder browser
+        </CardTitle>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Click a folder to navigate into it. The selected prefix updates automatically.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Breadcrumb trail */}
+        <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+          <button
+            onClick={() => onSelect("")}
+            className="rounded px-1.5 py-0.5 text-primary hover:bg-muted transition-colors"
+            data-testid="breadcrumb-root"
+          >
+            root
+          </button>
+          {crumbs.map((crumb, i) => (
+            <Fragment key={crumbPrefix(i)}>
+              <span className="text-muted-foreground">/</span>
+              <button
+                onClick={() => onSelect(crumbPrefix(i))}
+                className={`rounded px-1.5 py-0.5 transition-colors hover:bg-muted ${
+                  i === crumbs.length - 1
+                    ? "font-medium text-foreground"
+                    : "text-primary"
+                }`}
+                data-testid={`breadcrumb-${crumb}`}
+              >
+                {crumb}
+              </button>
+            </Fragment>
+          ))}
+        </div>
+
+        {/* Sub-folder grid */}
+        {subQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            Loading sub-folders…
+          </div>
+        ) : subFolders.length > 0 ? (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {subFolders.map((folder) => {
+              const name = folder.replace(selectedPrefix, "").replace(/\/$/, "");
+              return (
+                <button
+                  key={folder}
+                  onClick={() => { onSelect(folder); }}
+                  className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-left text-xs transition hover:border-primary/60 hover:bg-muted"
+                  data-testid={`button-folder-${name}`}
+                >
+                  <Folder className="size-3.5 shrink-0 text-primary" />
+                  <span className="truncate font-mono">{name}/</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground" data-testid="text-no-subfolders">
+            No sub-folders found in{" "}
+            <span className="font-mono font-medium">{selectedPrefix || "root"}</span>.
+          </p>
+        )}
+
+        {subQuery.data?.ok === false && (
+          <p className="text-xs text-destructive" data-testid="text-folder-browser-error">
+            {subQuery.data.error?.message || "Could not load sub-folders."}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -289,13 +289,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     return handleRun(req, res, { demo: true });
   });
 
-  async function handleGaragePrefixes(_req: Request, res: Response) {
+  async function handleGaragePrefixes(req: Request, res: Response) {
     const startedAt = new Date();
     let stdout = "";
     let stderr = "";
     let exitCode: number | null = 0;
     try {
-      const job: JobConfig = { vendor: "NVIDIA", vram: "2GB" };
+      const prefix = typeof req.body?.prefix === "string" ? req.body.prefix.trim() : (process.env.GARAGE_PREFIX || "");
+      const job: JobConfig = { vendor: "NVIDIA", vram: "2GB", prefix };
       const r = await runPython(PREFIX_DIRECT_SCRIPT, job, PYTHON_TIMEOUT_MS);
       stdout = r.stdout;
       stderr = r.stderr;

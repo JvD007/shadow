@@ -58,7 +58,11 @@ def main() -> None:
             prefixes.add(configured_prefix)
 
         paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Delimiter="/"):
+        kwargs: dict = {"Bucket": bucket, "Delimiter": "/"}
+        if configured_prefix:
+            kwargs["Prefix"] = configured_prefix
+
+        for page in paginator.paginate(**kwargs):
             for cp in page.get("CommonPrefixes") or []:
                 if cp.get("Prefix"):
                     prefixes.add(cp["Prefix"])
@@ -66,6 +70,7 @@ def main() -> None:
         emit({
             "ok": True,
             "bucket": bucket,
+            "listing_prefix": configured_prefix,
             "prefixes": sorted(prefixes, key=lambda p: ("" if p == "" else p.lower(), p == "")),
         })
     except Exception as exc:
